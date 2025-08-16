@@ -29,10 +29,18 @@ jobs:
       - name: Checkout dev branch
         uses: actions/checkout@v4
 
-      - name: Sync to Dev Server (20.1.156.227)
+      - name: Install sshpass
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.1.156.227:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
+          if ! command -v sshpass &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y sshpass
+          fi
+
+      - name: Sync to Dev Server (20.1.156.227)
+        env:
+          DEV_PASSWORD: ${{ secrets.DEV_SERVER_PASSWORD }}
+        run: |
+          sshpass -p "$DEV_PASSWORD" rsync -avz -e "ssh -o StrictHostKeyChecking=no" ./ airflow@20.1.156.227:/app/
+          sshpass -p "$DEV_PASSWORD" ssh -o StrictHostKeyChecking=no airflow@20.1.156.227 "ls -l /app/"
 
   promote-qa:
     runs-on: self-hosted
@@ -57,10 +65,18 @@ jobs:
       - name: Checkout qa branch
         uses: actions/checkout@v4
 
-      - name: Sync to QA Server (20.41.12.28)
+      - name: Install sshpass
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.41.12.28:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
+          if ! command -v sshpass &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y sshpass
+          fi
+
+      - name: Sync to QA Server (20.41.12.28)
+        env:
+          QA_PASSWORD: ${{ secrets.QA_SERVER_PASSWORD }}
+        run: |
+          sshpass -p "$QA_PASSWORD" rsync -avz -e "ssh -o StrictHostKeyChecking=no" ./ airflow@20.41.12.28:/app/
+          sshpass -p "$QA_PASSWORD" ssh -o StrictHostKeyChecking=no airflow@20.41.12.28 "ls -l /app/"
 
   promote-prod:
     runs-on: self-hosted
@@ -85,17 +101,25 @@ jobs:
       - name: Notify NOC Team
         run: |
           echo "✅ NOC Team: Prod branch is ready for deployment on 20.57.59.31"
-          # Optionally send Slack/Teams/Email notification here
+          # Optionally integrate Slack/Teams/Email here
 
   deploy-prod:
     runs-on: self-hosted
     needs: notify-noc
-    environment: production   # 👈 this makes GitHub pause until approved
+    environment: production   # 👈 requires manual approval before running
     steps:
       - name: Checkout prod branch
         uses: actions/checkout@v4
 
-      - name: Sync to Prod Server (20.57.59.31)
+      - name: Install sshpass
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.57.59.31:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.57.59.31 "ls -l /app/"
+          if ! command -v sshpass &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y sshpass
+          fi
+
+      - name: Sync to Prod Server (20.57.59.31)
+        env:
+          PROD_PASSWORD: ${{ secrets.PROD_SERVER_PASSWORD }}
+        run: |
+          sshpass -p "$PROD_PASSWORD" rsync -avz -e "ssh -o StrictHostKeyChecking=no" ./ airflow@20.57.59.31:/app/
+          sshpass -p "$PROD_PASSWORD" ssh -o StrictHostKeyChecking=no airflow@20.57.59.31 "ls -l /app/"
