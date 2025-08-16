@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: TEST
+          fetch-depth: 0
 
       - name: Push changes to DEV branch
         run: |
@@ -35,6 +36,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: DEV
+          fetch-depth: 0
 
       - name: Sync files to DEV server
         run: |
@@ -52,6 +54,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: DEV
+          fetch-depth: 0
 
       - name: Push changes to QA branch
         run: |
@@ -68,6 +71,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: QA
+          fetch-depth: 0
 
       - name: Sync files to QA server
         run: |
@@ -85,6 +89,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: QA
+          fetch-depth: 0
 
       - name: Push changes to PROD branch
         run: |
@@ -98,7 +103,7 @@ jobs:
     needs: qa-to-prod
     steps:
       - name: Send notification
-        run: echo "NOC Team:PROD branch is ready for deployment."
+        run: echo "NOC Team: PROD branch is ready for deployment."
 
   deploy-prod:
     name: Sync to PROD Server
@@ -110,6 +115,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: PROD
+          fetch-depth: 0
 
       - name: Sync files to PROD server
         run: |
