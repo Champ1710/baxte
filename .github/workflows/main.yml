@@ -18,7 +18,7 @@ env:
 
 jobs:
   # Step 2: TEST → DEV
-  promote-test-to-dev:
+  promote-test-to-dev: 
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
