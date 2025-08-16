@@ -1,184 +1,117 @@
 name: Branch Promotion Pipeline
 
 on:
-  push:
-    branches:
-      - test              # Step 1: App team pushes to TEST → kicks off full chain
-
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to promote/deploy"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - dev
+          - qa
+          - prod
 permissions:
-  contents: write         # allow CI to push between branches
-
-env: 
-  SSH_KEY: /home/azure/.ssh/airflow_deploy_key
-  SSH_USER: airflow
-  DEV_HOST: 20.1.156.227
-  QA_HOST: 20.41.12.28
-  PROD_HOST: 20.57.59.31
-  REMOTE_DIR: /app        # target dir on all servers
-
+ contents: write
 jobs:
-  # Step 2: TEST → DEV
-  promote-test-to-dev: 
+  promote-dev:
+    if: ${{ github.event.inputs.branch == 'test' }}
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Promote test → dev (auto-create branch, prefer TEST on conflicts)
-        env:
-          SOURCE_BRANCH: test
-          TARGET_BRANCH: dev
+      - name: Merge test -> dev
         run: |
-          set -e
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
-
           git fetch origin
-          if git show-ref --verify --quiet refs/heads/$TARGET_BRANCH; then
-            git checkout $TARGET_BRANCH
-          else
-            git checkout -b $TARGET_BRANCH
-          fi
+          git checkout dev
+          git merge --no-ff origin/test -m "Promote test -> dev"
+          git push origin dev
 
-          git pull origin $TARGET_BRANCH || true
-          # Always take SOURCE branch on conflicts
-          git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
-          git push --force-with-lease origin $TARGET_BRANCH
-
-  # Step 3: Sync DEV + validate
-  sync-dev:
+  deploy-dev:
+    if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
-    needs: promote-test-to-dev
+    needs: promote-dev
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: dev }
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
 
-      - name: Upload to DEV via SFTP
+      - name: Sync to Dev Server (20.1.156.227)
         run: |
-          set -e
-          # ensure remote dir exists, then upload
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST "mkdir -p $REMOTE_DIR"
-          # Use SFTP in batch mode (upload everything from repo root)
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST <<EOF
-          put -r * $REMOTE_DIR/
-          bye
-          EOF
+          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.1.156.227:/app/
+          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
 
-      - name: Validate on DEV
-        run: |
-          set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
-
-  # Step 4: DEV → QA
-  promote-dev-to-qa:
+  promote-qa:
+    if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
-    needs: sync-dev
+    needs: deploy-dev
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Promote dev → qa (auto-create branch, prefer DEV on conflicts)
-        env:
-          SOURCE_BRANCH: dev
-          TARGET_BRANCH: qa
+      - name: Merge dev -> qa
         run: |
-          set -e
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
-
           git fetch origin
-          if git show-ref --verify --quiet refs/heads/$TARGET_BRANCH; then
-            git checkout $TARGET_BRANCH
-          else
-            git checkout -b $TARGET_BRANCH
-          fi
+          git checkout qa
+          git merge --no-ff origin/dev -m "Promote dev -> qa"
+          git push origin qa
 
-          git pull origin $TARGET_BRANCH || true
-          git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
-          git push --force-with-lease origin $TARGET_BRANCH
-
-  # Step 5: Sync QA + validate
-  sync-qa:
+  deploy-qa:
+    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
-    needs: promote-dev-to-qa
+    needs: promote-qa
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: qa }
+      - name: Checkout qa branch
+        uses: actions/checkout@v4
 
-      - name: Upload to QA via SFTP
+      - name: Sync to QA Server (20.41.12.28)
         run: |
-          set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST <<EOF
-          put -r * $REMOTE_DIR/
-          bye
-          EOF
+          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.41.12.28:/app/
+          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
 
-      - name: Validate on QA
-        run: |
-          set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
-
-  # --- Manual approval gate for PROD starts here ---
-  # Step 6: QA → PROD (needs approval via Environment)
-  promote-qa-to-prod:
+  promote-prod:
+    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
-    needs: sync-qa
-    environment: production   # configure this environment with required reviewers (NOC)
+    needs: deploy-qa
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Promote qa → prod (auto-create branch, prefer QA on conflicts)
-        env:
-          SOURCE_BRANCH: qa
-          TARGET_BRANCH: prod
+      - name: Merge qa -> prod
         run: |
-          set -e
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
-
           git fetch origin
-          if git show-ref --verify --quiet refs/heads/$TARGET_BRANCH; then
-            git checkout $TARGET_BRANCH
-          else
-            git checkout -b $TARGET_BRANCH
-          fi
+          git checkout prod
+          git merge --no-ff origin/qa -m "Promote qa -> prod"
+          git push origin prod
 
-          git pull origin $TARGET_BRANCH || true
-          git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
-          git push --force-with-lease origin $TARGET_BRANCH
-
-  # Step 7: Notify NOC
   notify-noc:
+    if: ${{ github.event.inputs.branch == 'prod' }}
     runs-on: self-hosted
-    needs: promote-qa-to-prod
+    needs: promote-prod
     steps:
-      - name: Notify NOC
+      - name: Notify NOC Team
         run: |
-          echo "✅ QA → PROD promotion complete for branch 'prod'."
-          echo "🧑‍💻 NOC can now approve and run PROD sync (next job uses 'production' environment too)."
-          # (Optional) Add Slack/Teams/email webhook call here.
+          echo "✅ NOC Team: Prod branch is ready for deployment on 20.57.59.31"
+          # Send Slack/Teams/Email here if needed
 
-  # Step 8: NOC approves & syncs PROD (gated by the same 'production' environment)
-  sync-prod:
+  deploy-prod:
+    if: ${{ github.event.inputs.branch == 'prod' }}
     runs-on: self-hosted
     needs: notify-noc
-    environment: production   # approval here gives NOC the ability to run PROD sync
+    environment: production   # 👈 requires manual approval (NOC step)
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: prod }
+      - name: Checkout prod branch
+        uses: actions/checkout@v4
 
-      - name: Upload to PROD via SFTP
+      - name: Sync to Prod Server (20.57.59.31)
         run: |
-          set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$PROD_HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$PROD_HOST <<EOF
-          put -r * $REMOTE_DIR/
-          bye
-          EOF
-
-      - name: Validate on PROD
-        run: |
-          set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$PROD_HOST "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
+          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.57.59.31:/app/
+          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.57.59.31 "ls -l /app/"
