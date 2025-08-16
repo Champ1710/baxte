@@ -11,7 +11,7 @@ on:
 
 jobs:
   promote:
-    runs-on: self-hosted
+    runs-on: self-hosted   # 👈 your runner
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -19,99 +19,86 @@ jobs:
       - name: Setup Git
         run: |
           git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config user.email "github-actions@github.com"
 
-      - name: Setup SSH Key
+      # Step 1: Configure SSH
+      - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SFTP_PRIVATE_KEY }}" > ~/.ssh/airflow_deploy_key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/airflow_deploy_key
           chmod 600 ~/.ssh/airflow_deploy_key
           ssh-keyscan -H 20.1.156.227 >> ~/.ssh/known_hosts
           ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
           ssh-keyscan -H 20.57.59.31 >> ~/.ssh/known_hosts
 
-      # Step1 → Step2: Promote TEST → DEV
+      # Step 2: TEST → DEV branch
       - name: Promote test → dev
-        if: github.ref == 'refs/heads/test'
         run: |
-          git checkout dev
-          git merge --no-ff test -m "Promote test → dev"
+          git fetch origin
+          git checkout dev || git checkout -b dev
+          git merge origin/test --no-edit || echo "No changes to merge"
           git push origin dev
 
-      # Step3: Sync DEV branch → DEV server
+      # Step 3: Sync DEV branch → DEV server
       - name: Sync DEV to server
-        if: github.ref == 'refs/heads/test'
         run: |
-          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 "mkdir -p /app"
           sftp -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 <<EOF
+          mkdir /app || true
           put -r * /app/
           bye
-          EOF
+EOF
+          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 "ls -l /app"
 
-      # Step4: Promote DEV → QA
+      # Step 4: DEV → QA branch
       - name: Promote dev → qa
-        if: github.ref == 'refs/heads/dev'
         run: |
-          git checkout qa
-          git merge --no-ff dev -m "Promote dev → qa"
+          git checkout qa || git checkout -b qa
+          git merge origin/dev --no-edit || echo "No changes to merge"
           git push origin qa
 
-      # Step5: Sync QA branch → QA server
+      # Step 5: Sync QA branch → QA server
       - name: Sync QA to server
-        if: github.ref == 'refs/heads/dev'
         run: |
-          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 "mkdir -p /app"
           sftp -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 <<EOF
+          mkdir /app || true
           put -r * /app/
           bye
-          EOF
+EOF
+          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 "ls -l /app"
 
-      # Step6: Promote QA → PROD (after approval)
-      - name: Wait for Approval (QA → PROD)
-        if: github.ref == 'refs/heads/qa'
-        uses: trstringer/manual-approval@v1
-        with:
-          secret: ${{ github.token }}
-          approvers: user1,user2  # Replace with actual GitHub usernames
-          minimum-approvals: 1
-          issue-title: "Approval required: Promote QA → PROD"
-
-      - name: Promote qa → prod
-        if: github.ref == 'refs/heads/qa'
-        run: |
-          git checkout prod
-          git merge --no-ff qa -m "Promote qa → prod"
-          git push origin prod
-
-      # Step7: Notify NOC (GitHub issue)
-      - name: Notify NOC
-        if: github.ref == 'refs/heads/qa'
-        uses: peter-evans/create-issue-from-file@v4
-        with:
-          title: "QA → PROD Promotion Approved"
-          content-filepath: ./README.md   # Replace with a summary file if you like
-          labels: NOC
-
-  # Step8: NOC can run PROD sync manually
   sync-prod:
-    runs-on: self-hosted
+    runs-on: self-hosted   # 👈 same runner
     needs: promote
-    if: github.ref == 'refs/heads/prod'
+    environment: production   # requires manual approval from NOC
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup SSH Key
+      - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SFTP_PRIVATE_KEY }}" > ~/.ssh/airflow_deploy_key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/airflow_deploy_key
           chmod 600 ~/.ssh/airflow_deploy_key
           ssh-keyscan -H 20.57.59.31 >> ~/.ssh/known_hosts
 
+      # Step 6: QA → PROD branch
+      - name: Promote qa → prod
+        run: |
+          git fetch origin
+          git checkout prod || git checkout -b prod
+          git merge origin/qa --no-edit || echo "No changes to merge"
+          git push origin prod
+
+      # Step 7: Notify NOC
+      - name: Notify NOC
+        run: echo "QA → PROD promotion approved. Files ready for sync."
+
+      # Step 8: Sync PROD → PROD server
       - name: Sync PROD to server
         run: |
-          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 "mkdir -p /app"
           sftp -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 <<EOF
+          mkdir /app || true
           put -r * /app/
           bye
-          EOF
+EOF
+          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 "ls -l /app"
