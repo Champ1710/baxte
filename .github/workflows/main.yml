@@ -8,7 +8,7 @@ on:
 permissions:
   contents: write         # allow CI to push between branches
 
-env:
+env: 
   SSH_KEY: /home/azure/.ssh/airflow_deploy_key
   SSH_USER: airflow
   DEV_HOST: 20.1.156.227
