@@ -3,250 +3,110 @@ name: Branch Promotion Pipeline
 on:
   push:
     branches:
-      - test            # Step 1: App team commits to TEST → kicks off whole chain
-
+      - test
+      - dev
+      - qa
+      - prod
 permissions:
-  contents: write       # allow CI to push updated branches
-
-env:
-  SSH_USER: airflow
-  DEV_HOST: 20.1.156.227
-  QA_HOST: 20.41.12.28
-  PROD_HOST: 20.57.59.31
-  REMOTE_DIR: /app
-  PK_PATH: ~/.ssh/airflow_deploy_key
-  PACKAGE_NAME: app_deploy.tgz
-
+ contents: write
+ 
 jobs:
-  # -------- Step 2: TEST → DEV --------
-  promote-test-to-dev:
+  promote-dev:
+    if: github.ref == 'refs/heads/test'
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup SSH key (from secret)
+      - name: Merge test -> dev
         run: |
-          set -e
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
-          chmod 600 "$PK_PATH"
-
-      - name: Promote test → dev (auto-create, prefer TEST on conflicts)
-        env:
-          SOURCE_BRANCH: test
-          TARGET_BRANCH: dev
-        run: |
-          set -e
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
-
           git fetch origin
-          if git show-ref --verify --quiet refs/heads/$TARGET_BRANCH; then
-            git checkout $TARGET_BRANCH
-          else
-            git checkout -b $TARGET_BRANCH
-          fi
+          git checkout dev
+          git merge --no-ff origin/test -m "Promote test -> dev"
+          git push origin dev
 
-          git pull origin $TARGET_BRANCH || true
-          git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
-          git push --force-with-lease origin $TARGET_BRANCH
-
-  # -------- Step 3: Sync DEV + validate --------
-  sync-dev:
+  deploy-dev:
+    if: github.ref == 'refs/heads/dev'
     runs-on: self-hosted
-    needs: promote-test-to-dev
+    needs: promote-dev
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: dev }
+      - name: Checkout dev branch
+        uses: actions/checkout@v4
 
-      - name: Setup SSH key (from secret)
+      - name: Sync to Dev Server (20.1.156.227)
         run: |
-          set -e
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
-          chmod 600 "$PK_PATH"
+          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.1.156.227:/app/
+          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
 
-      - name: Package repo (exclude VCS/CI files)
-        run: |
-          set -e
-          tar --exclude=.git --exclude=.github -czf "$PACKAGE_NAME" .
-
-      - name: Upload + extract to DEV via SFTP/SSH
-        env:
-          HOST: ${{ env.DEV_HOST }}
-        run: |
-          set -e
-          # ensure remote dir exists
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "mkdir -p $REMOTE_DIR"
-          # upload package
-          sftp -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST <<EOF
-          put $PACKAGE_NAME /tmp/$PACKAGE_NAME
-          bye
-          EOF
-          # extract
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "tar -xzf /tmp/$PACKAGE_NAME -C $REMOTE_DIR && rm -f /tmp/$PACKAGE_NAME"
-
-      - name: Validate on DEV
-        env:
-          HOST: ${{ env.DEV_HOST }}
-        run: |
-          set -e
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST \
-            "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
-
-  # -------- Step 4: DEV → QA --------
-  promote-dev-to-qa:
+  promote-qa:
+    if: github.ref == 'refs/heads/dev'
     runs-on: self-hosted
-    needs: sync-dev
+    needs: deploy-dev
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Setup SSH key (from secret)
+      - name: Merge dev -> qa
         run: |
-          set -e
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
-          chmod 600 "$PK_PATH"
-
-      - name: Promote dev → qa (auto-create, prefer DEV on conflicts)
-        env:
-          SOURCE_BRANCH: dev
-          TARGET_BRANCH: qa
-        run: |
-          set -e
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
-
           git fetch origin
-          if git show-ref --verify --quiet refs/heads/$TARGET_BRANCH; then
-            git checkout $TARGET_BRANCH
-          else
-            git checkout -b $TARGET_BRANCH
-          fi
+          git checkout qa
+          git merge --no-ff origin/dev -m "Promote dev -> qa"
+          git push origin qa
 
-          git pull origin $TARGET_BRANCH || true
-          git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
-          git push --force-with-lease origin $TARGET_BRANCH
-
-  # -------- Step 5: Sync QA + validate --------
-  sync-qa:
+  deploy-qa:
+    if: github.ref == 'refs/heads/qa'
     runs-on: self-hosted
-    needs: promote-dev-to-qa
+    needs: promote-qa
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: qa }
+      - name: Checkout qa branch
+        uses: actions/checkout@v4
 
-      - name: Setup SSH key (from secret)
+      - name: Sync to QA Server (20.41.12.28)
         run: |
-          set -e
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
-          chmod 600 "$PK_PATH"
+          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.41.12.28:/app/
+          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
 
-      - name: Package repo (exclude VCS/CI files)
-        run: |
-          set -e
-          tar --exclude=.git --exclude=.github -czf "$PACKAGE_NAME" .
-
-      - name: Upload + extract to QA via SFTP/SSH
-        env:
-          HOST: ${{ env.QA_HOST }}
-        run: |
-          set -e
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST <<EOF
-          put $PACKAGE_NAME /tmp/$PACKAGE_NAME
-          bye
-          EOF
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "tar -xzf /tmp/$PACKAGE_NAME -C $REMOTE_DIR && rm -f /tmp/$PACKAGE_NAME"
-
-      - name: Validate on QA
-        env:
-          HOST: ${{ env.QA_HOST }}
-        run: |
-          set -e
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST \
-            "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
-
-  # -------- Step 6: QA → PROD (approval required) --------
-  promote-qa-to-prod:
+  promote-prod:
+    if: github.ref == 'refs/heads/qa'
     runs-on: self-hosted
-    needs: sync-qa
-    environment: production   # NOC approval gate
+    needs: deploy-qa
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Promote qa → prod (auto-create, prefer QA on conflicts)
-        env:
-          SOURCE_BRANCH: qa
-          TARGET_BRANCH: prod
+      - name: Merge qa -> prod
         run: |
-          set -e
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
-
           git fetch origin
-          if git show-ref --verify --quiet refs/heads/$TARGET_BRANCH; then
-            git checkout $TARGET_BRANCH
-          else
-            git checkout -b $TARGET_BRANCH
-          fi
+          git checkout prod
+          git merge --no-ff origin/qa -m "Promote qa -> prod"
+          git push origin prod
 
-          git pull origin $TARGET_BRANCH || true
-          git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
-          git push --force-with-lease origin $TARGET_BRANCH
-
-  # -------- Step 7: Notify NOC --------
   notify-noc:
+    if: github.ref == 'refs/heads/prod'
     runs-on: self-hosted
-    needs: promote-qa-to-prod
+    needs: promote-prod
     steps:
-      - name: Notify NOC
+      - name: Notify NOC Team
         run: |
-          echo "✅ QA → PROD promotion completed for branch 'prod'."
-          echo "🛑 PROD sync will run after NOC approves the next job (production environment)."
-          # Optionally call Slack/Teams/Email webhook here.
+          echo "✅ NOC Team: Prod branch is ready for deployment on 20.57.59.31"
+          # Send Slack/Teams/Email here if needed
 
-  # -------- Step 8: NOC approves & syncs PROD --------
-  sync-prod:
+  deploy-prod:
+    if: github.ref == 'refs/heads/prod'
     runs-on: self-hosted
     needs: notify-noc
-    environment: production   # NOC approval (same env gate)
+    environment: production   # 👈 requires manual approval (NOC step)
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: prod }
+      - name: Checkout prod branch
+        uses: actions/checkout@v4
 
-      - name: Setup SSH key (from secret)
+      - name: Sync to Prod Server (20.57.59.31)
         run: |
-          set -e
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
-          chmod 600 "$PK_PATH"
-
-      - name: Package repo (exclude VCS/CI files)
-        run: |
-          set -e
-          tar --exclude=.git --exclude=.github -czf "$PACKAGE_NAME" .
-
-      - name: Upload + extract to PROD via SFTP/SSH
-        env:
-          HOST: ${{ env.PROD_HOST }}
-        run: |
-          set -e
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST <<EOF
-          put $PACKAGE_NAME /tmp/$PACKAGE_NAME
-          bye
-          EOF
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "tar -xzf /tmp/$PACKAGE_NAME -C $REMOTE_DIR && rm -f /tmp/$PACKAGE_NAME"
-
-      - name: Validate on PROD
-        env:
-          HOST: ${{ env.PROD_HOST }}
-        run: |
-          set -e
-          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST \
-            "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
+          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.57.59.31:/app/
+          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.57.59.31 "ls -l /app/"
