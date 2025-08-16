@@ -7,108 +7,91 @@ on:
       - dev
       - qa
       - prod
-  workflow_dispatch:
-  
+
 jobs:
   promote:
     runs-on: self-hosted
-    env:
-      REMOTE_DIR: /app
-      SSH_KEY: /home/azure/.ssh/airflow_deploy_key
-      SSH_USER: airflow
-      DEV_HOST: 20.1.156.227
-      QA_HOST: 20.41.12.28
-      PROD_HOST: 20.57.59.31
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Git
         run: |
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
 
-      # STEP 2: Promote TEST → DEV
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SFTP_PRIVATE_KEY }}" > ~/.ssh/airflow_deploy_key
+          chmod 600 ~/.ssh/airflow_deploy_key
+          ssh-keyscan -H 20.1.156.227 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 20.57.59.31 >> ~/.ssh/known_hosts
+
+      # Step1 → Step2: Promote TEST → DEV
       - name: Promote test → dev
         if: github.ref == 'refs/heads/test'
         run: |
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/dev; then
-            git checkout dev
-          else
-            git checkout -b dev
-          fi
-          git merge --no-ff origin/test -m "Promote test → dev"
+          git checkout dev
+          git merge --no-ff test -m "Promote test → dev"
           git push origin dev
 
-      # STEP 3: Sync DEV to server
+      # Step3: Sync DEV branch → DEV server
       - name: Sync DEV to server
-        if: github.ref == 'refs/heads/dev'
+        if: github.ref == 'refs/heads/test'
         run: |
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST <<EOF
-          put -r * $REMOTE_DIR/
+          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 "mkdir -p /app"
+          sftp -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 <<EOF
+          put -r * /app/
           bye
           EOF
 
-      # STEP 4: Promote DEV → QA
+      # Step4: Promote DEV → QA
       - name: Promote dev → qa
         if: github.ref == 'refs/heads/dev'
         run: |
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/qa; then
-            git checkout qa
-          else
-            git checkout -b qa
-          fi
-          git merge --no-ff origin/dev -m "Promote dev → qa"
+          git checkout qa
+          git merge --no-ff dev -m "Promote dev → qa"
           git push origin qa
 
-      # STEP 5: Sync QA to server
+      # Step5: Sync QA branch → QA server
       - name: Sync QA to server
-        if: github.ref == 'refs/heads/qa'
+        if: github.ref == 'refs/heads/dev'
         run: |
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST <<EOF
-          put -r * $REMOTE_DIR/
+          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 "mkdir -p /app"
+          sftp -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 <<EOF
+          put -r * /app/
           bye
           EOF
 
-      # STEP 6: Manual approval before QA → PROD
+      # Step6: Promote QA → PROD (after approval)
       - name: Wait for Approval (QA → PROD)
         if: github.ref == 'refs/heads/qa'
         uses: trstringer/manual-approval@v1
         with:
-          secret: ${{ github.TOKEN }}
-          approvers: |
-            yourgithubid1
-            yourgithubid2
+          secret: ${{ github.token }}
+          approvers: user1,user2  # Replace with actual GitHub usernames
           minimum-approvals: 1
-          issue-title: "Approve promotion from QA → PROD"
+          issue-title: "Approval required: Promote QA → PROD"
 
-      # STEP 7: Promote QA → PROD
       - name: Promote qa → prod
         if: github.ref == 'refs/heads/qa'
         run: |
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/prod; then
-            git checkout prod
-          else
-            git checkout -b prod
-          fi
-          git merge --no-ff origin/qa -m "Promote qa → prod"
+          git checkout prod
+          git merge --no-ff qa -m "Promote qa → prod"
           git push origin prod
 
-      # STEP 8: Sync PROD to server (manual by NOC)
+      # Step7: Notify NOC (GitHub issue)
       - name: Notify NOC
-        if: github.ref == 'refs/heads/prod'
-        run: |
-          echo "NOC notified: QA → PROD promotion done. Use manual sync job to deploy to PROD."
+        if: github.ref == 'refs/heads/qa'
+        uses: peter-evans/create-issue-from-file@v4
+        with:
+          title: "QA → PROD Promotion Approved"
+          content-filepath: ./README.md   # Replace with a summary file if you like
+          labels: NOC
 
-  # Separate job for NOC team to manually sync PROD
+  # Step8: NOC can run PROD sync manually
   sync-prod:
     runs-on: self-hosted
     needs: promote
@@ -117,10 +100,17 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SFTP_PRIVATE_KEY }}" > ~/.ssh/airflow_deploy_key
+          chmod 600 ~/.ssh/airflow_deploy_key
+          ssh-keyscan -H 20.57.59.31 >> ~/.ssh/known_hosts
+
       - name: Sync PROD to server
         run: |
-          ssh -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 "mkdir -p /app"
-          sftp -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 <<EOF
+          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 "mkdir -p /app"
+          sftp -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 <<EOF
           put -r * /app/
           bye
           EOF
