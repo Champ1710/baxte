@@ -103,7 +103,7 @@ jobs:
     needs: qa-to-prod
     steps:
       - name: Send notification
-        run: echo "NOC Team: PROD branch is ready for deployment."
+        run: echo "NOC Team:PROD branch is ready for deployment."
 
   deploy-prod:
     name: Sync to PROD Server
