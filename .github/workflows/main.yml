@@ -3,28 +3,36 @@ name: Branch Promotion Pipeline
 on:
   push:
     branches:
-      - test              # Step 1: App team pushes to TEST → kicks off full chain
+      - test            # Step 1: App team commits to TEST → kicks off whole chain
 
 permissions:
-  contents: write         # allow CI to push between branches
+  contents: write       # allow CI to push updated branches
 
-env: 
-  SSH_KEY: /home/azure/.ssh/airflow_deploy_key
+env:
   SSH_USER: airflow
   DEV_HOST: 20.1.156.227
   QA_HOST: 20.41.12.28
   PROD_HOST: 20.57.59.31
-  REMOTE_DIR: /app        # target dir on all servers
+  REMOTE_DIR: /app
+  PK_PATH: ~/.ssh/airflow_deploy_key
+  PACKAGE_NAME: app_deploy.tgz
 
 jobs:
-  # Step 2: TEST → DEV
-  promote-test-to-dev: 
+  # -------- Step 2: TEST → DEV --------
+  promote-test-to-dev:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Promote test → dev (auto-create branch, prefer TEST on conflicts)
+      - name: Setup SSH key (from secret)
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
+          chmod 600 "$PK_PATH"
+
+      - name: Promote test → dev (auto-create, prefer TEST on conflicts)
         env:
           SOURCE_BRANCH: test
           TARGET_BRANCH: dev
@@ -41,11 +49,10 @@ jobs:
           fi
 
           git pull origin $TARGET_BRANCH || true
-          # Always take SOURCE branch on conflicts
           git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
           git push --force-with-lease origin $TARGET_BRANCH
 
-  # Step 3: Sync DEV + validate
+  # -------- Step 3: Sync DEV + validate --------
   sync-dev:
     runs-on: self-hosted
     needs: promote-test-to-dev
@@ -53,23 +60,42 @@ jobs:
       - uses: actions/checkout@v4
         with: { ref: dev }
 
-      - name: Upload to DEV via SFTP
+      - name: Setup SSH key (from secret)
         run: |
           set -e
-          # ensure remote dir exists, then upload
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST "mkdir -p $REMOTE_DIR"
-          # Use SFTP in batch mode (upload everything from repo root)
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST <<EOF
-          put -r * $REMOTE_DIR/
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
+          chmod 600 "$PK_PATH"
+
+      - name: Package repo (exclude VCS/CI files)
+        run: |
+          set -e
+          tar --exclude=.git --exclude=.github -czf "$PACKAGE_NAME" .
+
+      - name: Upload + extract to DEV via SFTP/SSH
+        env:
+          HOST: ${{ env.DEV_HOST }}
+        run: |
+          set -e
+          # ensure remote dir exists
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "mkdir -p $REMOTE_DIR"
+          # upload package
+          sftp -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST <<EOF
+          put $PACKAGE_NAME /tmp/$PACKAGE_NAME
           bye
           EOF
+          # extract
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "tar -xzf /tmp/$PACKAGE_NAME -C $REMOTE_DIR && rm -f /tmp/$PACKAGE_NAME"
 
       - name: Validate on DEV
+        env:
+          HOST: ${{ env.DEV_HOST }}
         run: |
           set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST \
+            "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
 
-  # Step 4: DEV → QA
+  # -------- Step 4: DEV → QA --------
   promote-dev-to-qa:
     runs-on: self-hosted
     needs: sync-dev
@@ -77,7 +103,14 @@ jobs:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Promote dev → qa (auto-create branch, prefer DEV on conflicts)
+      - name: Setup SSH key (from secret)
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
+          chmod 600 "$PK_PATH"
+
+      - name: Promote dev → qa (auto-create, prefer DEV on conflicts)
         env:
           SOURCE_BRANCH: dev
           TARGET_BRANCH: qa
@@ -97,7 +130,7 @@ jobs:
           git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
           git push --force-with-lease origin $TARGET_BRANCH
 
-  # Step 5: Sync QA + validate
+  # -------- Step 5: Sync QA + validate --------
   sync-qa:
     runs-on: self-hosted
     needs: promote-dev-to-qa
@@ -105,31 +138,48 @@ jobs:
       - uses: actions/checkout@v4
         with: { ref: qa }
 
-      - name: Upload to QA via SFTP
+      - name: Setup SSH key (from secret)
         run: |
           set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST <<EOF
-          put -r * $REMOTE_DIR/
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
+          chmod 600 "$PK_PATH"
+
+      - name: Package repo (exclude VCS/CI files)
+        run: |
+          set -e
+          tar --exclude=.git --exclude=.github -czf "$PACKAGE_NAME" .
+
+      - name: Upload + extract to QA via SFTP/SSH
+        env:
+          HOST: ${{ env.QA_HOST }}
+        run: |
+          set -e
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "mkdir -p $REMOTE_DIR"
+          sftp -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST <<EOF
+          put $PACKAGE_NAME /tmp/$PACKAGE_NAME
           bye
           EOF
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "tar -xzf /tmp/$PACKAGE_NAME -C $REMOTE_DIR && rm -f /tmp/$PACKAGE_NAME"
 
       - name: Validate on QA
+        env:
+          HOST: ${{ env.QA_HOST }}
         run: |
           set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST \
+            "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
 
-  # --- Manual approval gate for PROD starts here ---
-  # Step 6: QA → PROD (needs approval via Environment)
+  # -------- Step 6: QA → PROD (approval required) --------
   promote-qa-to-prod:
     runs-on: self-hosted
     needs: sync-qa
-    environment: production   # configure this environment with required reviewers (NOC)
+    environment: production   # NOC approval gate
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Promote qa → prod (auto-create branch, prefer QA on conflicts)
+      - name: Promote qa → prod (auto-create, prefer QA on conflicts)
         env:
           SOURCE_BRANCH: qa
           TARGET_BRANCH: prod
@@ -149,36 +199,54 @@ jobs:
           git merge -X theirs origin/$SOURCE_BRANCH -m "Promote $SOURCE_BRANCH → $TARGET_BRANCH" || true
           git push --force-with-lease origin $TARGET_BRANCH
 
-  # Step 7: Notify NOC
+  # -------- Step 7: Notify NOC --------
   notify-noc:
     runs-on: self-hosted
     needs: promote-qa-to-prod
     steps:
       - name: Notify NOC
         run: |
-          echo "✅ QA → PROD promotion complete for branch 'prod'."
-          echo "🧑‍💻 NOC can now approve and run PROD sync (next job uses 'production' environment too)."
-          # (Optional) Add Slack/Teams/email webhook call here.
+          echo "✅ QA → PROD promotion completed for branch 'prod'."
+          echo "🛑 PROD sync will run after NOC approves the next job (production environment)."
+          # Optionally call Slack/Teams/Email webhook here.
 
-  # Step 8: NOC approves & syncs PROD (gated by the same 'production' environment)
+  # -------- Step 8: NOC approves & syncs PROD --------
   sync-prod:
     runs-on: self-hosted
     needs: notify-noc
-    environment: production   # approval here gives NOC the ability to run PROD sync
+    environment: production   # NOC approval (same env gate)
     steps:
       - uses: actions/checkout@v4
         with: { ref: prod }
 
-      - name: Upload to PROD via SFTP
+      - name: Setup SSH key (from secret)
         run: |
           set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$PROD_HOST "mkdir -p $REMOTE_DIR"
-          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$PROD_HOST <<EOF
-          put -r * $REMOTE_DIR/
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > "$PK_PATH"
+          chmod 600 "$PK_PATH"
+
+      - name: Package repo (exclude VCS/CI files)
+        run: |
+          set -e
+          tar --exclude=.git --exclude=.github -czf "$PACKAGE_NAME" .
+
+      - name: Upload + extract to PROD via SFTP/SSH
+        env:
+          HOST: ${{ env.PROD_HOST }}
+        run: |
+          set -e
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "mkdir -p $REMOTE_DIR"
+          sftp -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST <<EOF
+          put $PACKAGE_NAME /tmp/$PACKAGE_NAME
           bye
           EOF
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST "tar -xzf /tmp/$PACKAGE_NAME -C $REMOTE_DIR && rm -f /tmp/$PACKAGE_NAME"
 
       - name: Validate on PROD
+        env:
+          HOST: ${{ env.PROD_HOST }}
         run: |
           set -e
-          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$PROD_HOST "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
+          ssh -i "$PK_PATH" -o StrictHostKeyChecking=no $SSH_USER@$HOST \
+            "test -d $REMOTE_DIR && ls -la $REMOTE_DIR | head -n 50 && [ \$(find $REMOTE_DIR -maxdepth 1 -type f | wc -l) -ge 1 ]"
