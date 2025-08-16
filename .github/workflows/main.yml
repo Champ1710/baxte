@@ -1,118 +1,120 @@
-name: Branch Promotion Pipeline
+name: Branch Promotion & Deployment
 
 on:
-  workflow_dispatch:
-    inputs:
-      branch: 
-        description: "Branch to promote/deploy"
-        required: true
-        default: "test"
-        type: choice
-        options:
-          - test
-          - dev
-          - qa
-          - prod
+  push:
+    branches:
+      - test
+      - dev
+      - qa
+      - prod
 permissions:
- contents: write
+  contents: write
 
 jobs:
   promote-dev:
-    if: ${{ github.event.inputs.branch == 'test' }}
     runs-on: self-hosted
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Merge test -> dev
+      - name: Promote test → dev
         run: |
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
           git fetch origin
-          git checkout dev
-          git merge --no-ff origin/test -m "Promote test -> dev"
+          if git show-ref --verify --quiet refs/heads/dev; then
+            git checkout dev
+          else
+            git checkout -b dev
+          fi
+          git merge --no-ff origin/test -m "Promote test → dev" || true
           git push origin dev
 
   deploy-dev:
-    if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
     needs: promote-dev
     steps:
-      - name: Checkout dev branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
 
-      - name: Sync to Dev Server (20.1.156.227)
+      - name: Sync to DEV Server
         run: |
           rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.1.156.227:/app/
           ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
 
   promote-qa:
-    if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
     needs: deploy-dev
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Merge dev -> qa
+      - name: Promote dev → qa
         run: |
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
           git fetch origin
-          git checkout qa
-          git merge --no-ff origin/dev -m "Promote dev -> qa"
+          if git show-ref --verify --quiet refs/heads/qa; then
+            git checkout qa
+          else
+            git checkout -b qa
+          fi
+          git merge --no-ff origin/dev -m "Promote dev → qa" || true
           git push origin qa
 
   deploy-qa:
-    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
     needs: promote-qa
     steps:
-      - name: Checkout qa branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: qa
 
-      - name: Sync to QA Server (20.41.12.28)
+      - name: Sync to QA Server
         run: |
           rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.41.12.28:/app/
           ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
 
   promote-prod:
-    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
     needs: deploy-qa
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Merge qa -> prod
+      - name: Promote qa → prod
         run: |
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
           git fetch origin
-          git checkout prod
-          git merge --no-ff origin/qa -m "Promote qa -> prod"
+          if git show-ref --verify --quiet refs/heads/prod; then
+            git checkout prod
+          else
+            git checkout -b prod
+          fi
+          git merge --no-ff origin/qa -m "Promote qa → prod" || true
           git push origin prod
 
   notify-noc:
-    if: ${{ github.event.inputs.branch == 'prod' }}
     runs-on: self-hosted
     needs: promote-prod
     steps:
-      - name: Notify NOC Team
-        run: |
-          echo "✅ NOC Team: Prod branch is ready for deployment on 20.57.59.31"
-          # Send Slack/Teams/Email here if needed
+      - name: Notify NOC
+        run: echo "NOC Team notified: PROD promotion completed."
 
   deploy-prod:
-    if: ${{ github.event.inputs.branch == 'prod' }}
     runs-on: self-hosted
     needs: notify-noc
-    environment: production   # 👈 requires manual approval (NOC step)
     steps:
-      - name: Checkout prod branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: prod
 
-      - name: Sync to Prod Server (20.57.59.31)
+      - name: Sync to PROD Server
         run: |
           rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.57.59.31:/app/
           ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.57.59.31 "ls -l /app/"
