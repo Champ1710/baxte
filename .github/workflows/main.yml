@@ -1,18 +1,24 @@
 name: Branch Promotion Pipeline
 
 on:
-  push:
-    branches:
-      - test
-      - dev
-      - qa
-      - prod
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to promote/deploy"
+        required: true
+        default: "test"
+        type: choice
+        options:
+          - test
+          - dev
+          - qa
+          - prod
 permissions:
  contents: write
- 
+
 jobs:
   promote-dev:
-    if: github.ref == 'refs/heads/test'
+    if: ${{ github.event.inputs.branch == 'test' }}
     runs-on: self-hosted
     steps:
       - name: Checkout code
@@ -28,7 +34,7 @@ jobs:
           git push origin dev
 
   deploy-dev:
-    if: github.ref == 'refs/heads/dev'
+    if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
     needs: promote-dev
     steps:
@@ -41,7 +47,7 @@ jobs:
           ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
 
   promote-qa:
-    if: github.ref == 'refs/heads/dev'
+    if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
     needs: deploy-dev
     steps:
@@ -58,7 +64,7 @@ jobs:
           git push origin qa
 
   deploy-qa:
-    if: github.ref == 'refs/heads/qa'
+    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
     needs: promote-qa
     steps:
@@ -71,7 +77,7 @@ jobs:
           ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
 
   promote-prod:
-    if: github.ref == 'refs/heads/qa'
+    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
     needs: deploy-qa
     steps:
@@ -88,7 +94,7 @@ jobs:
           git push origin prod
 
   notify-noc:
-    if: github.ref == 'refs/heads/prod'
+    if: ${{ github.event.inputs.branch == 'prod' }}
     runs-on: self-hosted
     needs: promote-prod
     steps:
@@ -98,7 +104,7 @@ jobs:
           # Send Slack/Teams/Email here if needed
 
   deploy-prod:
-    if: github.ref == 'refs/heads/prod'
+    if: ${{ github.event.inputs.branch == 'prod' }}
     runs-on: self-hosted
     needs: notify-noc
     environment: production   # 👈 requires manual approval (NOC step)
