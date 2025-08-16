@@ -13,7 +13,9 @@ on:
           - dev
           - qa
           - prod
-
+permissions:
+ contents: write
+ 
 jobs:
   promote-dev:
     if: ${{ github.event.inputs.branch == 'test' }}
