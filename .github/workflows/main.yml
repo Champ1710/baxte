@@ -1,125 +1,126 @@
-name: Deployment Pipeline
+name: Multi-Stage Promotion
 
 on:
+  push:
+    branches:
+      - test
+      - dev
+      - qa
+      - prod
   workflow_dispatch:
-    inputs:
-      deploy_prod:
-        description: "Deploy to PROD? (true/false)"
-        required: true
-        default: "false"
-
+  
 jobs:
-  test-to-dev:
-    name: Move from test to Dev
+  promote:
     runs-on: self-hosted
+    env:
+      REMOTE_DIR: /app
+      SSH_KEY: /home/azure/.ssh/airflow_deploy_key
+      SSH_USER: airflow
+      DEV_HOST: 20.1.156.227
+      QA_HOST: 20.41.12.28
+      PROD_HOST: 20.57.59.31
+
     steps:
-      - name: Checkout test branch
+      - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          ref: test
           fetch-depth: 0
 
-      - name: Push changes to DEV branch
+      - name: Setup Git
         run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git checkout DEV
-          git merge test --no-edit
-          git push origin DEV
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@example.com"
 
-  deploy-dev:
-    name: Sync to DEV Server
-    runs-on: self-hosted
-    needs: test-to-dev
-    steps:
-      - name: Checkout DEV branch
-        uses: actions/checkout@v4
+      # STEP 2: Promote TEST → DEV
+      - name: Promote test → dev
+        if: github.ref == 'refs/heads/test'
+        run: |
+          git fetch origin
+          if git show-ref --verify --quiet refs/heads/dev; then
+            git checkout dev
+          else
+            git checkout -b dev
+          fi
+          git merge --no-ff origin/test -m "Promote test → dev"
+          git push origin dev
+
+      # STEP 3: Sync DEV to server
+      - name: Sync DEV to server
+        if: github.ref == 'refs/heads/dev'
+        run: |
+          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST "mkdir -p $REMOTE_DIR"
+          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$DEV_HOST <<EOF
+          put -r * $REMOTE_DIR/
+          bye
+          EOF
+
+      # STEP 4: Promote DEV → QA
+      - name: Promote dev → qa
+        if: github.ref == 'refs/heads/dev'
+        run: |
+          git fetch origin
+          if git show-ref --verify --quiet refs/heads/qa; then
+            git checkout qa
+          else
+            git checkout -b qa
+          fi
+          git merge --no-ff origin/dev -m "Promote dev → qa"
+          git push origin qa
+
+      # STEP 5: Sync QA to server
+      - name: Sync QA to server
+        if: github.ref == 'refs/heads/qa'
+        run: |
+          ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST "mkdir -p $REMOTE_DIR"
+          sftp -i "$SSH_KEY" -o StrictHostKeyChecking=no $SSH_USER@$QA_HOST <<EOF
+          put -r * $REMOTE_DIR/
+          bye
+          EOF
+
+      # STEP 6: Manual approval before QA → PROD
+      - name: Wait for Approval (QA → PROD)
+        if: github.ref == 'refs/heads/qa'
+        uses: trstringer/manual-approval@v1
         with:
-          ref: DEV
-          fetch-depth: 0
+          secret: ${{ github.TOKEN }}
+          approvers: |
+            yourgithubid1
+            yourgithubid2
+          minimum-approvals: 1
+          issue-title: "Approve promotion from QA → PROD"
 
-      - name: Sync files to DEV server
+      # STEP 7: Promote QA → PROD
+      - name: Promote qa → prod
+        if: github.ref == 'refs/heads/qa'
         run: |
-          rsync -avz ./ airflow@20.41.12.28:/path/to/deploy
+          git fetch origin
+          if git show-ref --verify --quiet refs/heads/prod; then
+            git checkout prod
+          else
+            git checkout -b prod
+          fi
+          git merge --no-ff origin/qa -m "Promote qa → prod"
+          git push origin prod
 
-      - name: Validate deployment
-        run: ssh airflow@20.41.12.28 "ls -l /path/to/deploy"
+      # STEP 8: Sync PROD to server (manual by NOC)
+      - name: Notify NOC
+        if: github.ref == 'refs/heads/prod'
+        run: |
+          echo "NOC notified: QA → PROD promotion done. Use manual sync job to deploy to PROD."
 
-  dev-to-qa:
-    name: Move from Dev to QA
+  # Separate job for NOC team to manually sync PROD
+  sync-prod:
     runs-on: self-hosted
-    needs: deploy-dev
+    needs: promote
+    if: github.ref == 'refs/heads/prod'
     steps:
-      - name: Checkout DEV branch
+      - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          ref: DEV
-          fetch-depth: 0
 
-      - name: Push changes to QA branch
+      - name: Sync PROD to server
         run: |
-          git checkout QA
-          git merge DEV --no-edit
-          git push origin QA
-
-  deploy-qa:
-    name: Sync to QA Server
-    runs-on: self-hosted
-    needs: dev-to-qa
-    steps:
-      - name: Checkout QA branch
-        uses: actions/checkout@v4
-        with:
-          ref: QA
-          fetch-depth: 0
-
-      - name: Sync files to QA server
-        run: |
-          rsync -avz ./ airflow@20.1.156.277:/path/to/deploy
-
-      - name: Validate deployment
-        run: ssh airflow@20.1.156.277 "ls -l /path/to/deploy"
-
-  qa-to-prod:
-    name: Move from QA to PROD
-    runs-on: self-hosted
-    needs: deploy-qa
-    steps:
-      - name: Checkout QA branch
-        uses: actions/checkout@v4
-        with:
-          ref: QA
-          fetch-depth: 0
-
-      - name: Push changes to PROD branch
-        run: |
-          git checkout PROD
-          git merge QA --no-edit
-          git push origin PROD
-
-  notify-noc:
-    name: Notify NOC Team
-    runs-on: self-hosted
-    needs: qa-to-prod
-    steps:
-      - name: Send notification
-        run: echo "NOC Team:PROD branch is ready for deployment."
-
-  deploy-prod:
-    name: Sync to PROD Server
-    runs-on: self-hosted
-    needs: notify-noc
-    if: github.event.inputs.deploy_prod == 'true'
-    steps:
-      - name: Checkout PROD branch
-        uses: actions/checkout@v4
-        with:
-          ref: PROD
-          fetch-depth: 0
-
-      - name: Sync files to PROD server
-        run: |
-          rsync -avz ./ airflow@20.57.59.31:/path/to/deploy
-
-      - name: Validate deployment
-        run: ssh airflow@20.57.59.31 "ls -l /path/to/deploy"
+          ssh -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 "mkdir -p /app"
+          sftp -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 <<EOF
+          put -r * /app/
+          bye
+          EOF
