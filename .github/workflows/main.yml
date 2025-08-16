@@ -64,7 +64,7 @@ jobs:
           mkdir /app || true
           put -r * /app/
           bye
-EOF
+          EOF
           ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 "ls -l /app"
 
   sync-prod:
@@ -101,5 +101,5 @@ EOF
           mkdir /app || true
           put -r * /app/
           bye
-EOF
+          EOF
           ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 "ls -l /app"
