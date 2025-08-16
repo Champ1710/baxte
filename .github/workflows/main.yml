@@ -3,7 +3,7 @@ name: Branch Promotion Pipeline
 on:
   workflow_dispatch:
     inputs:
-      branch:
+      branch: 
         description: "Branch to promote/deploy"
         required: true
         default: "test"
