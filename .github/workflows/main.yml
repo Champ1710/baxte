@@ -13,9 +13,12 @@ on:
           - dev
           - qa
           - prod
+
 permissions:
- contents: write
+  contents: write
+
 jobs:
+  # ---------------------- TEST → DEV ----------------------
   promote-dev:
     if: ${{ github.event.inputs.branch == 'test' }}
     runs-on: self-hosted
@@ -33,7 +36,7 @@ jobs:
           git push origin dev --force
 
   deploy-dev:
-    if: ${{ github.event.inputs.branch == 'dev' }}
+    if: ${{ github.event.inputs.branch == 'test' }}
     runs-on: self-hosted
     needs: promote-dev
     steps:
@@ -45,10 +48,10 @@ jobs:
           rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.1.156.227:/app/
           ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
 
+  # ---------------------- DEV → QA ----------------------
   promote-qa:
     if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
-    needs: deploy-dev
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -63,7 +66,7 @@ jobs:
           git push origin qa --force
 
   deploy-qa:
-    if: ${{ github.event.inputs.branch == 'qa' }}
+    if: ${{ github.event.inputs.branch == 'dev' }}
     runs-on: self-hosted
     needs: promote-qa
     steps:
@@ -75,10 +78,10 @@ jobs:
           rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.41.12.28:/app/
           ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
 
+  # ---------------------- QA → PROD ----------------------
   promote-prod:
     if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
-    needs: deploy-qa
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -93,7 +96,7 @@ jobs:
           git push origin prod --force
 
   notify-noc:
-    if: ${{ github.event.inputs.branch == 'prod' }}
+    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
     needs: promote-prod
     steps:
@@ -103,7 +106,7 @@ jobs:
           # Send Slack/Teams/Email here if needed
 
   deploy-prod:
-    if: ${{ github.event.inputs.branch == 'prod' }}
+    if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
     needs: notify-noc
     environment: production   # 👈 requires manual approval (NOC step)
