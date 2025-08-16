@@ -1,120 +1,128 @@
-name: Branch Promotion & Deployment
+name: Deployment Pipeline
 
 on:
   push:
     branches:
-      - test
-      - dev
-      - qa
-      - prod
-permissions:
-  contents: write
+      - TEST   # trigger only on TEST branch changes
 
 jobs:
-  promote-dev:
+  promote-to-dev:
+    name: Promote TEST → DEV
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0   # full history for merging
 
-      - name: Promote test → dev
+      - name: Setup Git
         run: |
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/dev; then
-            git checkout dev
-          else
-            git checkout -b dev
-          fi
-          git merge --no-ff origin/test -m "Promote test → dev" || true
-          git push origin dev
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+      - name: Merge TEST into DEV
+        run: |
+          git checkout DEV
+          git merge origin/TEST --no-ff -m "Auto-promote TEST → DEV"
+          git push origin DEV
 
   deploy-dev:
+    name: Deploy to DEV Server
+    needs: promote-to-dev
     runs-on: self-hosted
-    needs: promote-dev
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: dev
+          ref: DEV
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
 
       - name: Sync to DEV Server
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.1.156.227:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
+          rsync -avz ./ ${{ secrets.DEV_USER }}@20.41.12.28:/path/to/deploy
 
-  promote-qa:
-    runs-on: self-hosted
+  promote-to-qa:
+    name: Promote DEV → QA
     needs: deploy-dev
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Promote dev → qa
+      - name: Setup Git
         run: |
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/qa; then
-            git checkout qa
-          else
-            git checkout -b qa
-          fi
-          git merge --no-ff origin/dev -m "Promote dev → qa" || true
-          git push origin qa
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+      - name: Merge DEV into QA
+        run: |
+          git checkout QA
+          git merge origin/DEV --no-ff -m "Auto-promote DEV → QA"
+          git push origin QA
 
   deploy-qa:
+    name: Deploy to QA Server
+    needs: promote-to-qa
     runs-on: self-hosted
-    needs: promote-qa
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: qa
+          ref: QA
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 20.57.59.31 >> ~/.ssh/known_hosts
 
       - name: Sync to QA Server
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.41.12.28:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
+          rsync -avz ./ ${{ secrets.QA_USER }}@20.57.59.31:/path/to/deploy
 
-  promote-prod:
-    runs-on: self-hosted
+  promote-to-prod:
+    name: Promote QA → PROD
     needs: deploy-qa
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Promote qa → prod
+      - name: Setup Git
         run: |
-          git config user.name "ci-bot"
-          git config user.email "ci-bot@example.com"
-          git fetch origin
-          if git show-ref --verify --quiet refs/heads/prod; then
-            git checkout prod
-          else
-            git checkout -b prod
-          fi
-          git merge --no-ff origin/qa -m "Promote qa → prod" || true
-          git push origin prod
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
 
-  notify-noc:
-    runs-on: self-hosted
-    needs: promote-prod
-    steps:
-      - name: Notify NOC
-
+      - name: Merge QA into PROD
+        run: |
+          git checkout PROD
+          git merge origin/QA --no-ff -m "Auto-promote QA → PROD"
+          git push origin PROD
 
   deploy-prod:
+    name: Deploy to PROD Server
+    needs: promote-to-prod
     runs-on: self-hosted
-    needs: notify-noc
+    environment: production   # restrict so only NOC can approve
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: prod
+          ref: PROD
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H <PROD_IP> >> ~/.ssh/known_hosts
 
       - name: Sync to PROD Server
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.57.59.31:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.57.59.31 "ls -l /app/"
+          rsync -avz ./ ${{ secrets.PROD_USER }}@<PROD_IP>:/path/to/deploy
