@@ -46,8 +46,9 @@ jobs:
           mkdir /app || true
           put -r * /app/
           bye
-EOF
-          ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 "ls -l /app"
+          EOF
+
+      ssh -i ~/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 "ls -l /app"
 
       # Step 4: DEV → QA branch
       - name: Promote dev → qa
