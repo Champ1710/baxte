@@ -104,7 +104,7 @@ jobs:
     needs: promote-prod
     steps:
       - name: Notify NOC
-        run: echo "NOC Team notified: PROD promotion completed."
+        run: echo "NOC Team notified:PROD promotion completed."
 
   deploy-prod:
     runs-on: self-hosted
