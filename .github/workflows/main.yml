@@ -43,10 +43,13 @@ jobs:
       - name: Checkout dev branch
         uses: actions/checkout@v4
 
-      - name: Sync to Dev Server (20.1.156.227)
+      - name: Upload files to Dev via SFTP
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.1.156.227:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 "ls -l /app/"
+          ssh -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 "mkdir -p /app"
+          sftp -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.1.156.227 <<EOF
+          put -r * /app/
+          bye
+          EOF
 
   # ---------------------- DEV → QA ----------------------
   promote-qa:
@@ -73,10 +76,13 @@ jobs:
       - name: Checkout qa branch
         uses: actions/checkout@v4
 
-      - name: Sync to QA Server (20.41.12.28)
+      - name: Upload files to QA via SFTP
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.41.12.28:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 "ls -l /app/"
+          ssh -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 "mkdir -p /app"
+          sftp -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.41.12.28 <<EOF
+          put -r * /app/
+          bye
+          EOF
 
   # ---------------------- QA → PROD ----------------------
   promote-prod:
@@ -109,12 +115,15 @@ jobs:
     if: ${{ github.event.inputs.branch == 'qa' }}
     runs-on: self-hosted
     needs: notify-noc
-    environment: production   # 👈 requires manual approval (NOC step)
+    environment: production   # 👈 requires manual approval
     steps:
       - name: Checkout prod branch
         uses: actions/checkout@v4
 
-      - name: Sync to Prod Server (20.57.59.31)
+      - name: Upload files to Prod via SFTP
         run: |
-          rsync -avz -e "ssh -i /home/azure/.ssh/airflow_deploy_key" ./ airflow@20.57.59.31:/app/
-          ssh -i /home/azure/.ssh/airflow_deploy_key airflow@20.57.59.31 "ls -l /app/"
+          ssh -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 "mkdir -p /app"
+          sftp -i /home/azure/.ssh/airflow_deploy_key -o StrictHostKeyChecking=no airflow@20.57.59.31 <<EOF
+          put -r * /app/
+          bye
+          EOF
