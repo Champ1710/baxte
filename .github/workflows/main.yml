@@ -10,13 +10,13 @@ on:
 
 jobs:
   test-to-dev:
-    name: Move from Test to Dev
+    name: Move from test to Dev
     runs-on: self-hosted
     steps:
-      - name: Checkout TEST branch
+      - name: Checkout test branch
         uses: actions/checkout@v4
         with:
-          ref: TEST
+          ref: test
           fetch-depth: 0
 
       - name: Push changes to DEV branch
@@ -24,7 +24,7 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git checkout DEV
-          git merge TEST --no-edit
+          git merge test --no-edit
           git push origin DEV
 
   deploy-dev:
