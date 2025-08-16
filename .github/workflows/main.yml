@@ -15,7 +15,6 @@ on:
           - prod
 permissions:
  contents: write
- 
 jobs:
   promote-dev:
     if: ${{ github.event.inputs.branch == 'test' }}
@@ -24,14 +23,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Merge test -> dev
+      - name: Force overwrite dev with test
         run: |
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
           git fetch origin
           git checkout dev || git checkout -b dev origin/dev
-          git merge --no-ff origin/test -m "Promote test -> dev" --allow-unrelated-histories
-          git push origin dev
+          git reset --hard origin/test
+          git push origin dev --force
 
   deploy-dev:
     if: ${{ github.event.inputs.branch == 'dev' }}
@@ -54,14 +53,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Merge dev -> qa
+      - name: Force overwrite qa with dev
         run: |
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
           git fetch origin
           git checkout qa || git checkout -b qa origin/qa
-          git merge --no-ff origin/dev -m "Promote dev -> qa" --allow-unrelated-histories
-          git push origin qa
+          git reset --hard origin/dev
+          git push origin qa --force
 
   deploy-qa:
     if: ${{ github.event.inputs.branch == 'qa' }}
@@ -84,14 +83,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Merge qa -> prod
+      - name: Force overwrite prod with qa
         run: |
           git config user.name "ci-bot"
           git config user.email "ci-bot@example.com"
           git fetch origin
           git checkout prod || git checkout -b prod origin/prod
-          git merge --no-ff origin/qa -m "Promote qa -> prod" --allow-unrelated-histories
-          git push origin prod
+          git reset --hard origin/qa
+          git push origin prod --force
 
   notify-noc:
     if: ${{ github.event.inputs.branch == 'prod' }}
