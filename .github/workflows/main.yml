@@ -1,0 +1,119 @@
+name: Deployment Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_prod:
+        description: "Deploy to PROD? (true/false)"
+        required: true
+        default: "false"
+
+jobs:
+  test-to-dev:
+    name: Move from Test to Dev
+    runs-on: self-hosted
+    steps:
+      - name: Checkout TEST branch
+        uses: actions/checkout@v4
+        with:
+          ref: TEST
+
+      - name: Push changes to DEV branch
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout DEV
+          git merge TEST --no-edit
+          git push origin DEV
+
+  deploy-dev:
+    name: Sync to DEV Server
+    runs-on: self-hosted
+    needs: test-to-dev
+    steps:
+      - name: Checkout DEV branch
+        uses: actions/checkout@v4
+        with:
+          ref: DEV
+
+      - name: Sync files to DEV server
+        run: |
+          rsync -avz ./ airflow@20.41.12.28:/path/to/deploy
+
+      - name: Validate deployment
+        run: ssh airflow@20.41.12.28 "ls -l /path/to/deploy"
+
+  dev-to-qa:
+    name: Move from Dev to QA
+    runs-on: self-hosted
+    needs: deploy-dev
+    steps:
+      - name: Checkout DEV branch
+        uses: actions/checkout@v4
+        with:
+          ref: DEV
+
+      - name: Push changes to QA branch
+        run: |
+          git checkout QA
+          git merge DEV --no-edit
+          git push origin QA
+
+  deploy-qa:
+    name: Sync to QA Server
+    runs-on: self-hosted
+    needs: dev-to-qa
+    steps:
+      - name: Checkout QA branch
+        uses: actions/checkout@v4
+        with:
+          ref: QA
+
+      - name: Sync files to QA server
+        run: |
+          rsync -avz ./ airflow@20.1.156.277:/path/to/deploy
+
+      - name: Validate deployment
+        run: ssh airflow@20.1.156.277 "ls -l /path/to/deploy"
+
+  qa-to-prod:
+    name: Move from QA to PROD
+    runs-on: self-hosted
+    needs: deploy-qa
+    steps:
+      - name: Checkout QA branch
+        uses: actions/checkout@v4
+        with:
+          ref: QA
+
+      - name: Push changes to PROD branch
+        run: |
+          git checkout PROD
+          git merge QA --no-edit
+          git push origin PROD
+
+  notify-noc:
+    name: Notify NOC Team
+    runs-on: self-hosted
+    needs: qa-to-prod
+    steps:
+      - name: Send notification
+        run: echo "NOC Team: PROD branch is ready for deployment."
+
+  deploy-prod:
+    name: Sync to PROD Server
+    runs-on: self-hosted
+    needs: notify-noc
+    if: github.event.inputs.deploy_prod == 'true'
+    steps:
+      - name: Checkout PROD branch
+        uses: actions/checkout@v4
+        with:
+          ref: PROD
+
+      - name: Sync files to PROD server
+        run: |
+          rsync -avz ./ airflow@20.57.59.31:/path/to/deploy
+
+      - name: Validate deployment
+        run: ssh airflow@20.57.59.31 "ls -l /path/to/deploy"
