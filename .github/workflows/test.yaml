@@ -48,11 +48,19 @@ jobs:
           echo "🚀 Deploying to Test..."
           rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
-          echo "bye" >> deploy_script.txt
-          cat deploy_script.txt
-          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping Test deploy"
@@ -91,11 +99,19 @@ jobs:
           echo "🚀 Deploying to QA..."
           rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
-          echo "bye" >> deploy_script.txt
-          cat deploy_script.txt
-          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping QA deploy"
@@ -134,11 +150,19 @@ jobs:
           echo "🚀 Deploying to Dev..."
           rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
-          echo "bye" >> deploy_script.txt
-          cat deploy_script.txt
-          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.1.56.227
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.1.56.227
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping Dev deploy"
@@ -177,11 +201,19 @@ jobs:
           echo "🚀 Deploying to Prod..."
           rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
-          echo "bye" >> deploy_script.txt
-          cat deploy_script.txt
-          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.57.59.31
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.57.59.31
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping Prod deploy"
