@@ -13,40 +13,7 @@ permissions:
   contents: write
 
 jobs:
-  # Ensure all environment branches exist
-  create-branches:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Ensure environment branches exist
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git fetch origin
-          for branch in Test QA Dev Prod; do
-            if git ls-remote --exit-code --heads origin $branch; then
-              echo "✅ Branch $branch already exists"
-            else
-              echo "🌱 Creating branch $branch"
-              git checkout -b $branch
-              git push origin $branch
-            fi
-          done
 
-  detect-changes:
-    name: Detect Changed Files
-    runs-on: self-hosted
-    needs: create-branches
-    outputs:
-      files: ${{ steps.get-changes.outputs.files }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # fetch all history
-      - id: get-changes
-        run: |
-          echo "🔍 Detecting changed files..."
-          PREV_COMMIT=$(git rev-parse HEAD^)
           CURR_COMMIT=$(git rev-parse HEAD)
           echo "Previous commit: $PREV_COMMIT"
           echo "Current commit: $CURR_COMMIT"
@@ -54,23 +21,21 @@ jobs:
           echo "Changed files: $CHANGED_FILES"
           echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
 
-  # ---------------- TEST ----------------
+
   deploy-to-test:
     if: github.ref == 'refs/heads/Test'
     needs: detect-changes
     runs-on: self-hosted
     environment: Test
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
+
       - name: Deploy to Test
         run: |
           echo "🚀 Deploying to Test..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+
           done
 
   promote-to-qa:
@@ -79,37 +44,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Promote Test → QA
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git fetch origin
           git checkout QA
-          if git diff --quiet origin/QA origin/Test; then
-            echo "✅ No changes to promote from Test → QA"
-          else
-            echo "🚀 Promoting changes from Test → QA"
-            git merge origin/Test --no-edit
-            git push origin QA
-          fi
 
-  # ---------------- QA ----------------
-  deploy-to-qa:
-    if: github.ref == 'refs/heads/QA'
-    needs: detect-changes
-    runs-on: self-hosted
-    environment: QA
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - name: Deploy to QA
         run: |
           echo "🚀 Deploying to QA..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
           done
 
   promote-to-dev:
@@ -118,37 +66,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Promote QA → Dev
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git fetch origin
           git checkout Dev
-          if git diff --quiet origin/Dev origin/QA; then
-            echo "✅ No changes to promote from QA → Dev"
-          else
-            echo "🚀 Promoting changes from QA → Dev"
-            git merge origin/QA --no-edit
-            git push origin Dev
-          fi
 
-  # ---------------- DEV ----------------
-  deploy-to-dev:
-    if: github.ref == 'refs/heads/Dev'
-    needs: detect-changes
-    runs-on: self-hosted
-    environment: Dev
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - name: Deploy to Dev
         run: |
           echo "🚀 Deploying to Dev..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.1.56.227 < deploy_script.txt
+
           done
 
   promote-to-prod:
@@ -157,35 +89,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Promote Dev → Prod
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git fetch origin
           git checkout Prod
-          if git diff --quiet origin/Prod origin/Dev; then
-            echo "✅ No changes to promote from Dev → Prod"
-          else
-            echo "🚀 Promoting changes from Dev → Prod"
-            git merge origin/Dev --no-edit
-            git push origin Prod
-          fi
 
-  # ---------------- PROD ----------------
-  deploy-to-prod:
-    if: github.ref == 'refs/heads/Prod'
-    needs: detect-changes
-    runs-on: self-hosted
-    environment: Prod
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - name: Deploy to Prod
         run: |
           echo "🚀 Deploying to Prod..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.57.59.31 < deploy_script.txt
           done
