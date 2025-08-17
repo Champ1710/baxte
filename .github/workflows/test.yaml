@@ -13,9 +13,31 @@ permissions:
   contents: write
 
 jobs:
+  # Ensure all environment branches exist
+  create-branches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ensure environment branches exist
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git fetch origin
+
+          for branch in Test QA Dev Prod; do
+            if git ls-remote --exit-code --heads origin $branch; then
+              echo "✅ Branch $branch already exists"
+            else
+              echo "🌱 Creating branch $branch"
+              git checkout -b $branch
+              git push origin $branch
+            fi
+          done
+
   detect-changes:
     name: Detect Changed Files
     runs-on: self-hosted
+    needs: create-branches
     outputs:
       files: ${{ steps.get-changes.outputs.files }}
     steps:
@@ -41,23 +63,13 @@ jobs:
     runs-on: self-hosted
     environment: Test
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
-
       - name: Deploy to Test
         run: |
           echo "🚀 Deploying to Test..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/id_rsa airflow@20.41.12.28 < deploy_script.txt
+            sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
           done
 
   promote-to-qa:
@@ -72,7 +84,7 @@ jobs:
           git config user.email "actions@github.com"
           git fetch origin
           git checkout QA
-          git merge origin/Test --no-edit
+          git merge origin/Test --no-edit || echo "⚠️ Nothing to merge"
           git push origin QA
 
   deploy-to-qa:
@@ -81,23 +93,13 @@ jobs:
     runs-on: self-hosted
     environment: QA
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
-
       - name: Deploy to QA
         run: |
           echo "🚀 Deploying to QA..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/id_rsa airflow@20.41.12.28 < deploy_script.txt
+            sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
           done
 
   promote-to-dev:
@@ -112,7 +114,7 @@ jobs:
           git config user.email "actions@github.com"
           git fetch origin
           git checkout Dev
-          git merge origin/QA --no-edit
+          git merge origin/QA --no-edit || echo "⚠️ Nothing to merge"
           git push origin Dev
 
   deploy-to-dev:
@@ -121,23 +123,13 @@ jobs:
     runs-on: self-hosted
     environment: Dev
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H 20.1.156.227 >> ~/.ssh/known_hosts
-
       - name: Deploy to Dev
         run: |
           echo "🚀 Deploying to Dev..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/id_rsa airflow@20.1.156.227 < deploy_script.txt
+            sftp -i ~/.ssh/airflow_deploy_key airflow@20.1.156.227 < deploy_script.txt
           done
 
   promote-to-prod:
@@ -152,7 +144,7 @@ jobs:
           git config user.email "actions@github.com"
           git fetch origin
           git checkout Prod
-          git merge origin/Dev --no-edit
+          git merge origin/Dev --no-edit || echo "⚠️ Nothing to merge"
           git push origin Prod
 
   deploy-to-prod:
@@ -161,21 +153,11 @@ jobs:
     runs-on: self-hosted
     environment: Prod
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup SSH Key
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
-
       - name: Deploy to Prod
         run: |
           echo "🚀 Deploying to Prod..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/id_rsa airflow@20.41.12.28 < deploy_script.txt
+            sftp -i ~/.ssh/airflow_deploy_key airflow@20.57.59.31 < deploy_script.txt
           done
