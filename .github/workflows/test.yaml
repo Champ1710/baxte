@@ -52,7 +52,7 @@ jobs:
           done
           echo "bye" >> deploy_script.txt
           cat deploy_script.txt
-          sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping Test deploy"
@@ -95,7 +95,7 @@ jobs:
           done
           echo "bye" >> deploy_script.txt
           cat deploy_script.txt
-          sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping QA deploy"
@@ -138,7 +138,7 @@ jobs:
           done
           echo "bye" >> deploy_script.txt
           cat deploy_script.txt
-          sftp -i ~/.ssh/airflow_deploy_key airflow@20.1.56.227 < deploy_script.txt
+          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.1.56.227
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping Dev deploy"
@@ -181,7 +181,7 @@ jobs:
           done
           echo "bye" >> deploy_script.txt
           cat deploy_script.txt
-          sftp -i ~/.ssh/airflow_deploy_key airflow@20.57.59.31 < deploy_script.txt
+          sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.57.59.31
       - name: Skip Deploy
         if: needs.detect-changes.outputs.files == ''
         run: echo "✅ No files changed, skipping Prod deploy"
