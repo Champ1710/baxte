@@ -13,47 +13,26 @@ permissions:
   contents: write
 
 jobs:
-  # Ensure all environment branches exist
-  create-branches:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Ensure environment branches exist
-        run: |
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git fetch origin
-          for branch in Test QA Dev Prod; do
-            if git ls-remote --exit-code --heads origin $branch; then
-              echo "✅ Branch $branch already exists"
-            else
-              echo "🌱 Creating branch $branch"
-              git checkout -b $branch
-              git push origin $branch
-            fi
-          done
   detect-changes:
     name: Detect Changed Files
     runs-on: self-hosted
-    needs: create-branches
     outputs:
       files: ${{ steps.get-changes.outputs.files }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Get changed files using Git history
-        id: get-changes
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: get-changes
         run: |
           echo "🔍 Detecting changed files..."
-          git fetch --unshallow || true
-          PREV_COMMIT=$(git rev-list --parents -n 1 HEAD | awk '{print $2}')
+          PREV_COMMIT=$(git rev-parse HEAD^)
           CURR_COMMIT=$(git rev-parse HEAD)
           echo "Previous commit: $PREV_COMMIT"
           echo "Current commit: $CURR_COMMIT"
           CHANGED_FILES=$(git diff --name-only $PREV_COMMIT $CURR_COMMIT | tr '\n' ' ')
           echo "Changed files: $CHANGED_FILES"
           echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+
   deploy-to-test:
     if: github.ref == 'refs/heads/Test'
     needs: detect-changes
@@ -63,15 +42,26 @@ jobs:
       - name: Deploy to Test
         run: |
           echo "🚀 Deploying to Test..."
+          rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
-            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
-            echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
+            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
+
   promote-to-qa:
     if: github.ref == 'refs/heads/Test'
     needs: deploy-to-test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Promote Test → QA
@@ -80,8 +70,13 @@ jobs:
           git config user.email "actions@github.com"
           git fetch origin
           git checkout QA
-          git merge origin/Test --no-edit || echo "⚠️ Nothing to merge"
-          git push origin QA
+          if git diff --quiet origin/QA origin/Test; then
+            echo "✅ No changes to promote"
+          else
+            git merge origin/Test --no-edit
+            git push origin QA
+          fi
+
   deploy-to-qa:
     if: github.ref == 'refs/heads/QA'
     needs: detect-changes
@@ -91,15 +86,26 @@ jobs:
       - name: Deploy to QA
         run: |
           echo "🚀 Deploying to QA..."
+          rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
-            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
-            echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
+            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.41.12.28
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
+
   promote-to-dev:
     if: github.ref == 'refs/heads/QA'
     needs: deploy-to-qa
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Promote QA → Dev
@@ -108,8 +114,13 @@ jobs:
           git config user.email "actions@github.com"
           git fetch origin
           git checkout Dev
-          git merge origin/QA --no-edit || echo "⚠️ Nothing to merge"
-          git push origin Dev
+          if git diff --quiet origin/Dev origin/QA; then
+            echo "✅ No changes to promote"
+          else
+            git merge origin/QA --no-edit
+            git push origin Dev
+          fi
+
   deploy-to-dev:
     if: github.ref == 'refs/heads/Dev'
     needs: detect-changes
@@ -119,15 +130,26 @@ jobs:
       - name: Deploy to Dev
         run: |
           echo "🚀 Deploying to Dev..."
+          rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
-            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
-            echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.1.156.227 < deploy_script.txt
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
+            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.1.56.227
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
+
   promote-to-prod:
     if: github.ref == 'refs/heads/Dev'
     needs: deploy-to-dev
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Promote Dev → Prod
@@ -136,8 +158,13 @@ jobs:
           git config user.email "actions@github.com"
           git fetch origin
           git checkout Prod
-          git merge origin/Dev --no-edit || echo "⚠️ Nothing to merge"
-          git push origin Prod
+          if git diff --quiet origin/Prod origin/Dev; then
+            echo "✅ No changes to promote"
+          else
+            git merge origin/Dev --no-edit
+            git push origin Prod
+          fi
+
   deploy-to-prod:
     if: github.ref == 'refs/heads/Prod'
     needs: detect-changes
@@ -147,8 +174,18 @@ jobs:
       - name: Deploy to Prod
         run: |
           echo "🚀 Deploying to Prod..."
+          rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
-            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
-            echo "bye" >> deploy_script.txt
-            sftp -i ~/.ssh/airflow_deploy_key airflow@20.57.59.31 < deploy_script.txt
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
+            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
           done
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            cat deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt airflow@20.57.59.31
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
