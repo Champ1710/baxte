@@ -27,8 +27,6 @@ jobs:
           echo "🔍 Detecting changed files..."
           PREV_COMMIT=$(git rev-parse HEAD^)
           CURR_COMMIT=$(git rev-parse HEAD)
-          echo "Previous commit: $PREV_COMMIT"
-          echo "Current commit: $CURR_COMMIT"
           CHANGED_FILES=$(git diff --name-only $PREV_COMMIT $CURR_COMMIT | tr '\n' ' ')
           echo "Changed files: $CHANGED_FILES"
           echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
@@ -43,6 +41,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Deploy to Test
+        if: needs.detect-changes.outputs.files != ''
         run: |
           echo "🚀 Deploying to Test..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
@@ -50,6 +49,9 @@ jobs:
             echo "bye" >> deploy_script.txt
             sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
           done
+      - name: Skip Deploy
+        if: needs.detect-changes.outputs.files == ''
+        run: echo "✅ No files changed, skipping Test deploy"
 
   promote-to-qa:
     if: github.ref == 'refs/heads/Test'
@@ -64,15 +66,15 @@ jobs:
           git fetch origin
           git checkout QA
           if git diff --quiet origin/QA origin/Test; then
-            echo "✅ No changes to promote"
+            echo "✅ No changes to promote from Test → QA"
           else
-            git merge origin/Test --no-edit
+            git merge origin/Test --allow-unrelated-histories --no-edit
             git push origin QA
           fi
 
   deploy-to-qa:
     if: github.ref == 'refs/heads/QA'
-    needs: detect-changes
+    needs: promote-to-qa
     runs-on: self-hosted
     environment: QA
     steps:
@@ -80,6 +82,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Deploy to QA
+        if: needs.detect-changes.outputs.files != ''
         run: |
           echo "🚀 Deploying to QA..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
@@ -87,6 +90,9 @@ jobs:
             echo "bye" >> deploy_script.txt
             sftp -i ~/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
           done
+      - name: Skip Deploy
+        if: needs.detect-changes.outputs.files == ''
+        run: echo "✅ No files changed, skipping QA deploy"
 
   promote-to-dev:
     if: github.ref == 'refs/heads/QA'
@@ -101,15 +107,15 @@ jobs:
           git fetch origin
           git checkout Dev
           if git diff --quiet origin/Dev origin/QA; then
-            echo "✅ No changes to promote"
+            echo "✅ No changes to promote from QA → Dev"
           else
-            git merge origin/QA --no-edit
+            git merge origin/QA --allow-unrelated-histories --no-edit
             git push origin Dev
           fi
 
   deploy-to-dev:
     if: github.ref == 'refs/heads/Dev'
-    needs: detect-changes
+    needs: promote-to-dev
     runs-on: self-hosted
     environment: Dev
     steps:
@@ -117,6 +123,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Deploy to Dev
+        if: needs.detect-changes.outputs.files != ''
         run: |
           echo "🚀 Deploying to Dev..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
@@ -124,6 +131,9 @@ jobs:
             echo "bye" >> deploy_script.txt
             sftp -i ~/.ssh/airflow_deploy_key airflow@20.1.56.227 < deploy_script.txt
           done
+      - name: Skip Deploy
+        if: needs.detect-changes.outputs.files == ''
+        run: echo "✅ No files changed, skipping Dev deploy"
 
   promote-to-prod:
     if: github.ref == 'refs/heads/Dev'
@@ -138,15 +148,15 @@ jobs:
           git fetch origin
           git checkout Prod
           if git diff --quiet origin/Prod origin/Dev; then
-            echo "✅ No changes to promote"
+            echo "✅ No changes to promote from Dev → Prod"
           else
-            git merge origin/Dev --no-edit
+            git merge origin/Dev --allow-unrelated-histories --no-edit
             git push origin Prod
           fi
 
   deploy-to-prod:
     if: github.ref == 'refs/heads/Prod'
-    needs: detect-changes
+    needs: promote-to-prod
     runs-on: self-hosted
     environment: Prod
     steps:
@@ -154,6 +164,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - name: Deploy to Prod
+        if: needs.detect-changes.outputs.files != ''
         run: |
           echo "🚀 Deploying to Prod..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
@@ -161,3 +172,6 @@ jobs:
             echo "bye" >> deploy_script.txt
             sftp -i ~/.ssh/airflow_deploy_key airflow@20.57.59.31 < deploy_script.txt
           done
+      - name: Skip Deploy
+        if: needs.detect-changes.outputs.files == ''
+        run: echo "✅ No files changed, skipping Prod deploy"
