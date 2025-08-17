@@ -21,14 +21,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Get changed files using Git history
         id: get-changes
         run: |
           echo "🔍 Detecting changed files..."
-          PREV_COMMIT=$(git rev-parse HEAD^1)
+          git fetch --unshallow || true
+          PREV_COMMIT=$(git rev-list --parents -n 1 HEAD | awk '{print $2}')
           CURR_COMMIT=$(git rev-parse HEAD)
           echo "Previous commit: $PREV_COMMIT"
           echo "Current commit: $CURR_COMMIT"
@@ -42,13 +41,23 @@ jobs:
     runs-on: self-hosted
     environment: Test
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
+
       - name: Deploy to Test
         run: |
           echo "🚀 Deploying to Test..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+            sftp -i ~/.ssh/id_rsa airflow@20.41.12.28 < deploy_script.txt
           done
 
   promote-to-qa:
@@ -57,8 +66,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Promote Test → QA
         run: |
           git config user.name "github-actions"
@@ -70,17 +77,27 @@ jobs:
 
   deploy-to-qa:
     if: github.ref == 'refs/heads/QA'
-    needs: [detect-changes, promote-to-qa]
+    needs: detect-changes
     runs-on: self-hosted
     environment: QA
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
+
       - name: Deploy to QA
         run: |
           echo "🚀 Deploying to QA..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+            sftp -i ~/.ssh/id_rsa airflow@20.41.12.28 < deploy_script.txt
           done
 
   promote-to-dev:
@@ -89,8 +106,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Promote QA → Dev
         run: |
           git config user.name "github-actions"
@@ -102,17 +117,27 @@ jobs:
 
   deploy-to-dev:
     if: github.ref == 'refs/heads/Dev'
-    needs: [detect-changes, promote-to-dev]
+    needs: detect-changes
     runs-on: self-hosted
     environment: Dev
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 20.1.156.227 >> ~/.ssh/known_hosts
+
       - name: Deploy to Dev
         run: |
           echo "🚀 Deploying to Dev..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i /home/azure/.ssh/airflow_deploy_key airflow@20.1.156.227 < deploy_script.txt
+            sftp -i ~/.ssh/id_rsa airflow@20.1.156.227 < deploy_script.txt
           done
 
   promote-to-prod:
@@ -121,8 +146,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Promote Dev → Prod
         run: |
           git config user.name "github-actions"
@@ -134,15 +157,25 @@ jobs:
 
   deploy-to-prod:
     if: github.ref == 'refs/heads/Prod'
-    needs: [detect-changes, promote-to-prod]
+    needs: detect-changes
     runs-on: self-hosted
     environment: Prod
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H 20.41.12.28 >> ~/.ssh/known_hosts
+
       - name: Deploy to Prod
         run: |
           echo "🚀 Deploying to Prod..."
           for file in ${{ needs.detect-changes.outputs.files }}; do
             echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" > deploy_script.txt
             echo "bye" >> deploy_script.txt
-            sftp -i /home/azure/.ssh/airflow_deploy_key airflow@20.41.12.28 < deploy_script.txt
+            sftp -i ~/.ssh/id_rsa airflow@20.41.12.28 < deploy_script.txt
           done
