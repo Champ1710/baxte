@@ -15,7 +15,7 @@ permissions:
 jobs:
   detect-changes:
     name: Detect Changed Files
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       files: ${{ steps.get-changes.outputs.files }}
     steps:
@@ -60,7 +60,7 @@ jobs:
   promote-to-qa:
     if: github.ref == 'refs/heads/Test'
     needs: deploy-to-test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Promote Test → QA
@@ -103,7 +103,7 @@ jobs:
   promote-to-dev:
     if: github.ref == 'refs/heads/QA'
     needs: deploy-to-qa
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Promote QA → Dev
@@ -146,7 +146,7 @@ jobs:
   promote-to-prod:
     if: github.ref == 'refs/heads/Dev'
     needs: deploy-to-dev
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Promote Dev → Prod
