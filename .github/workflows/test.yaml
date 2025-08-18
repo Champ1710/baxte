@@ -32,13 +32,37 @@ jobs:
           else
             CHANGED_FILES=$(git diff --name-only $PREV_COMMIT $CURR_COMMIT | tr '\n' ' ')
           fi
-          echo "Changed files: $CHANGED_FILES"
           echo "files=$CHANGED_FILES" >> $GITHUB_OUTPUT
 
-  # Step 1 → 2: Promote TEST → DEV
-  promote-to-dev:
+  # Step 1: Deploy TEST
+  deploy-to-test:
     if: github.ref == 'refs/heads/Test'
     needs: detect-changes
+    runs-on: self-hosted
+    environment: Test
+    steps:
+      - name: Deploy to Test
+        run: |
+          echo "🚀 Deploying to Test..."
+          rm -f deploy_script.txt
+          for file in ${{ needs.detect-changes.outputs.files }}; do
+            if [[ "$file" == .github/* ]]; then
+              echo "⏩ Skipping $file (workflow/config file)"
+              continue
+            fi
+            echo "put -r \"$file\" \"/opt/app/pvcs/$file\"" >> deploy_script.txt
+          done
+          if [[ -s deploy_script.txt ]]; then
+            echo "bye" >> deploy_script.txt
+            sftp -o StrictHostKeyChecking=no -i ~/.ssh/airflow_deploy_key -b deploy_script.txt ecom@10.200.214.134
+          else
+            echo "✅ No deployable files, skipping SFTP."
+          fi
+
+  # Step 2: Promote TEST → DEV
+  promote-to-dev:
+    if: github.ref == 'refs/heads/Test'
+    needs: deploy-to-test
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +74,7 @@ jobs:
   # Step 3: Deploy DEV
   deploy-to-dev:
     if: github.ref == 'refs/heads/Dev'
-    needs: [detect-changes]
+    needs: detect-changes
     runs-on: self-hosted
     environment: Dev
     steps:
@@ -87,7 +111,7 @@ jobs:
   # Step 5: Deploy QA
   deploy-to-qa:
     if: github.ref == 'refs/heads/QA'
-    needs: [detect-changes]
+    needs: detect-changes
     runs-on: self-hosted
     environment: QA
     steps:
@@ -121,27 +145,16 @@ jobs:
           git fetch origin
           git push origin QA:Prod --force
 
-  # Step 7 & 8: NOC approval & Prod Deploy
-  notify-noc:
-    if: github.ref == 'refs/heads/Prod'
-    needs: promote-to-prod
-    runs-on: self-hosted
-    steps:
-      - name: Notify NOC Team
-        run: |
-          echo "📢 Notify NOC team: Prod branch updated. Awaiting manual approval."
-
   deploy-to-prod:
     if: github.ref == 'refs/heads/Prod'
-    needs: [detect-changes, notify-noc]
+    needs: detect-changes
     runs-on: self-hosted
     environment:
-      name: Prod
-      url: https://prod.example.com
+      name: Prod   # 👈 Requires manual approval (configured in GitHub → Settings → Environments → Prod)
     steps:
-      - name: Deploy to Prod (Manual Approval Required)
+      - name: Deploy to Prod
         run: |
-          echo "🚀 Deploying to Prod..."
+          echo "🚀 Deploying to Prod (NOC approval required)..."
           rm -f deploy_script.txt
           for file in ${{ needs.detect-changes.outputs.files }}; do
             if [[ "$file" == .github/* ]]; then
