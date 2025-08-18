@@ -145,12 +145,13 @@ jobs:
           git fetch origin
           git push origin QA:Prod --force
 
+  # Step 7 & 8: NOC Approval → Deploy PROD
   deploy-to-prod:
     if: github.ref == 'refs/heads/Prod'
-    needs: detect-changes
+    needs: promote-to-prod   # 👈 only runs after QA→Prod promotion
     runs-on: self-hosted
     environment:
-      name: Prod   # 👈 Requires manual approval (configured in GitHub → Settings → Environments → Prod)
+      name: Prod   # 🔑 requires manual approval in GitHub → Settings → Environments → Prod
     steps:
       - name: Deploy to Prod
         run: |
