@@ -1,0 +1,57 @@
+name: Deploy bn-tax-aggregator-service to Prod
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+env:
+  GHCR_USER: ${{ github.actor }}
+  GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+  SPRING_PROFILES_ACTIVE: prod
+  REGISTRY: ghcr.io
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    environment: prod          # triggers approval
+    strategy:
+      matrix:
+        host: [10.239.80.64,10.239.80.65]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ matrix.host }} >> ~/.ssh/known_hosts
+
+      - name: Update .env-prod
+        run: |
+          sed -i "s|^SPRING_PROFILES_ACTIVE=.*|SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}|" .env-prod
+          cat .env-prod
+
+      - name: Copy Deployment Files
+        run: |
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            compose.yaml .env-prod restart.sh diagnose.sh \
+            ecom@${{ matrix.host }}:/opt/app/vfill/microservices/bn-tax-aggregator-service
+
+      - name: Deploy on Prod Host
+        run: |
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ecom@${{ matrix.host }} bash -c "'
+            cd /opt/app/vfill/microservices/bn-tax-aggregator-service
+            chmod +x restart.sh
+            ./restart.sh --force-recreate
+            chmod +x diagnose.sh
+            ./diagnose.sh
+          '"
