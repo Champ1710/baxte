@@ -1,0 +1,81 @@
+name: Build and Push bn-tax-aggregator-service
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  GHCR_USER: ${{ github.actor }}
+  GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  REGISTRY: ghcr.io
+  IMAGE_LATEST_TAG: latest
+
+jobs:
+  build-and-push:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Configure Maven
+        run: |
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<EOF
+          <settings>
+            <servers>
+              <server>
+                <id>github</id>
+                <username>${{ github.actor }}</username>
+                <password>${{ secrets.GITHUB_TOKEN }}</password>
+              </server>
+            </servers>
+          </settings>
+          EOF
+
+      - name: Build JAR
+        run: /opt/apache-maven-3.9.6/bin/mvn clean package -DskipTests
+
+      - name: Locate JAR
+        id: jar
+        run: |
+          JAR_PATH=$(find target -name "bn-tax-aggregator-service-*.jar" | grep -v "original" | head -n 1)
+          echo "JAR_PATH=$JAR_PATH"
+          echo "jar_path=$JAR_PATH" >> $GITHUB_OUTPUT
+
+      - name: Get Version from pom.xml
+        id: version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          VERSION_LC=$(echo "$VERSION" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_TAG=$VERSION_LC" >> $GITHUB_ENV
+          echo "version=$VERSION_LC" >> $GITHUB_OUTPUT
+
+      - name: Define Image Tags
+        run: |
+          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_VERSIONED=${REGISTRY}/$REPO:$IMAGE_TAG" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=${REGISTRY}/$REPO:${IMAGE_LATEST_TAG}" >> $GITHUB_ENV
+          echo "IMAGE_SHA=${REGISTRY}/$REPO:${GITHUB_SHA}" >> $GITHUB_ENV
+
+      - name: Podman Login
+        run: echo "$GHCR_TOKEN" | podman login $REGISTRY -u "$GHCR_USER" --password-stdin
+
+      - name: Build & Push Image
+        run: |
+          podman build --no-cache \
+            --build-arg JAR_PATH="${{ steps.jar.outputs.jar_path }}" \
+            -t "$IMAGE_SHA" -t "$IMAGE_LATEST" -t "$IMAGE_VERSIONED" .
+
+          for TAG in "$IMAGE_SHA" "$IMAGE_LATEST" "$IMAGE_VERSIONED"; do
+            podman push "$TAG"
+          done
