@@ -1,93 +1,98 @@
-name: Build and Push bn-tax-aggregator-service
+name: Deploy bn-tax-aggregator-service to QA
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to build (e.g., 1.2.3)'
-        required: true
+  workflow_run:
+    workflows: ["Build and Push bn-tax-aggregator-service"]
+    types:
+      - completed
 
 permissions:
   contents: read
-  packages: write
+  packages: read
 
 env:
   GHCR_USER: ${{ github.actor }}
   GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+  SPRING_PROFILES_ACTIVE: qa3
   REGISTRY: ghcr.io
-  IMAGE_LATEST_TAG: latest
 
 jobs:
-  build-and-push:
+  deploy:
     runs-on: self-hosted
-    outputs:
-      jar_path: ${{ steps.jar.outputs.jar_path }}
-      jar_name: ${{ steps.jar.outputs.jar_name }}
-      image_ref: ${{ steps.tags.outputs.image_ref }}
+    environment: qa
+    strategy:
+      matrix:
+        host: [10.239.80.64,10.239.80.65]
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: 17
-          distribution: temurin
-
-      - name: Configure Maven for GitHub Packages
         run: |
-          mkdir -p ~/.m2
-          cat > ~/.m2/settings.xml <<EOF
-          <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
-                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                    xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
-            <servers>
-              <server>
-                <id>github</id>
-                <username>${{ github.actor }}</username>
-                <password>${{ secrets.GITHUB_TOKEN }}</password>
-              </server>
-            </servers>
-          </settings>
-          EOF
+          if [ $? -ne 0 ]; then
+            echo "Checkout failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
-      - name: Build JAR
-        run: /opt/apache-maven-3.9.6/bin/mvn clean package -DskipTests
-
-      - name: Locate Built JAR
-        id: jar
+      - name: Set Deployment Image
         run: |
-          JAR_PATH=$(find target -name "bn-tax-aggregator-service-*.jar" | grep -v "original" | head -n 1)
-          JAR_NAME=$(basename "$JAR_PATH")
-          echo "jar_path=$JAR_PATH" >> $GITHUB_OUTPUT
-          echo "jar_name=$JAR_NAME" >> $GITHUB_OUTPUT
+          echo "IMAGE_REF=${{ github.event.workflow_run.outputs.image_ref }}" >> $GITHUB_ENV
+          if [ $? -ne 0 ]; then
+            echo "Setting IMAGE_REF failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
-      - name: Define Image Tags
-        id: tags
+      - name: Setup SSH
         run: |
-          VERSION=${{ github.event.inputs.version }}
-          REPO=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE_VERSIONED=${REGISTRY}/$REPO:$VERSION
-          IMAGE_LATEST=${REGISTRY}/$REPO:$IMAGE_LATEST_TAG
-          IMAGE_SHA=${REGISTRY}/$REPO:${GITHUB_SHA}
-          echo "IMAGE_VERSIONED=$IMAGE_VERSIONED" >> $GITHUB_ENV
-          echo "IMAGE_LATEST=$IMAGE_LATEST" >> $GITHUB_ENV
-          echo "IMAGE_SHA=$IMAGE_SHA" >> $GITHUB_ENV
-          echo "image_ref=$IMAGE_VERSIONED" >> $GITHUB_OUTPUT
+          mkdir -p ~/.ssh
+          if [ $? -ne 0 ]; then
+            echo "Failed to create .ssh directory" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          eval "$(ssh-agent -s)"
+          ssh-add ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ matrix.host }} >> ~/.ssh/known_hosts
 
-      - name: Podman Login
-        run: echo "$GHCR_TOKEN" | podman login $REGISTRY -u "$GHCR_USER" --password-stdin
-
-      - name: Build Podman Image
+      - name: Update .env-qa3 with image
         run: |
-          podman build --no-cache --build-arg JAR_PATH="${{ steps.jar.outputs.jar_path }}" \
-            -t "$IMAGE_SHA" -t "$IMAGE_LATEST" -t "$IMAGE_VERSIONED" .
-          echo "Built image: $IMAGE_VERSIONED"
+          sed -i "s|^IMAGE=.*|IMAGE=${IMAGE_REF}|" .env-qa3
+          if [ $? -ne 0 ]; then
+            echo "Failed to update IMAGE in .env-qa3" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          sed -i "s|^SPRING_PROFILES_ACTIVE=.*|SPRING_PROFILES_ACTIVE=${SPRING_PROFILES_ACTIVE}|" .env-qa3
+          if [ $? -ne 0 ]; then
+            echo "Failed to update SPRING_PROFILES_ACTIVE in .env-qa3" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          cat .env-qa3
 
-      - name: Push Podman Images
+      - name: Copy Deployment Files
         run: |
-          for TAG in "$IMAGE_SHA" "$IMAGE_LATEST" "$IMAGE_VERSIONED"; do
-            podman push "$TAG"
-          done
+          scp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
+            compose.yaml .env-qa3 restart.sh diagnose.sh \
+            ecom@${{ matrix.host }}:/opt/app/vfill/microservices/bn-tax-aggregator-service
+          if [ $? -ne 0 ]; then
+            echo "SCP failed" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Deploy on QA Host
+        run: |
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no ecom@${{ matrix.host }} bash -c "'
+            cd /opt/app/vfill/microservices/bn-tax-aggregator-service
+            chmod +x restart.sh
+            ./restart.sh --force-recreate
+            if [ $? -ne 0 ]; then
+              echo "restart.sh failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+            chmod +x diagnose.sh
+            ./diagnose.sh
+            if [ $? -ne 0 ]; then
+              echo "diagnose.sh failed" >> $GITHUB_OUTPUT
+              exit 1
+            fi
+          '"
