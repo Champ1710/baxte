@@ -2,13 +2,8 @@ name: Deploy bn-tax-aggregator-service to QA
 
 on:
   workflow_dispatch:
-    inputs:
-      approved:
-        description: 'Set to yes to approve QA deployment'
-        required: true
-        default: 'no'
 
-permissions: 
+permissions:
   contents: read
   packages: read
 
@@ -20,23 +15,9 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  check-approval:
-    runs-on: ubuntu-latest
-    outputs:
-      approved: ${{ steps.check.outputs.approved }}
-    steps:
-      - name: Check QA Approval
-        id: check
-        run: |
-          if [ "${{ github.event.inputs.approved }}" != "yes" ]; then
-            echo "QA deployment not approved. Exiting."
-            exit 1
-          fi
-          echo "approved=yes" >> $GITHUB_OUTPUT
-
   deploy:
-    needs: check-approval
     runs-on: self-hosted
+    environment: qa   # <-- This triggers GitHub environment approval
     strategy:
       matrix:
         host: [10.239.80.64,10.239.80.65]
