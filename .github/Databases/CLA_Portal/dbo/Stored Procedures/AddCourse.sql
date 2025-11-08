@@ -7,7 +7,7 @@
 IF OBJECT_ID('dbo.AddCourse', 'P') IS NOT NULL
     DROP PROCEDURE dbo.AddCourse;
 GO
-
+#
 CREATE PROCEDURE dbo.AddCourse
     @CourseName NVARCHAR(100),
     @CreatedBy NVARCHAR(50)
