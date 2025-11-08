@@ -5,49 +5,48 @@ on:
     branches:
       - UAT
     paths:
-      - 'Databases/**'
-      - '!Databases/**/dbo/Datascripts/**'
+      - 'Databases/**/dbo/Stored Procedures/**/*.sql'
+  workflow_dispatch:  # allows manual run from GitHub Actions tab
 
 jobs:
-  deploy-to-test:
-    name: Deploy Changed SQL Scripts to TEST
+  deploy-sql:
     runs-on: windows-latest
 
     env:
-      testServer: sql1                # ✅ Your SQL Server name here
-      sqlUser: ${{ secrets.SQL_USER }}
-      sqlPassword: ${{ secrets.SQL_PASSWORD }}
+      sqlServer: "sql1"             # 🔹 your SQL Server name
+      sqlUser: ${{ secrets.SQL_USER }}       # 🔹 set this in GitHub Secrets
+      sqlPassword: ${{ secrets.SQL_PASSWORD }} # 🔹 set this in GitHub Secrets
+      databaseName: "CLA_Portal"    # 🔹 target database
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Find changed SQL files
-        id: detect
-        shell: pwsh
+        id: changes
         run: |
           git fetch origin UAT
-          $changed = git diff --name-only HEAD^ HEAD | Where-Object { $_ -match '^Databases/.+\.sql$' }
+          $changed = git diff --name-only HEAD~1 HEAD | Where-Object { $_ -like "Databases/*/dbo/Stored Procedures/*.sql" }
           if ($changed) {
-            $changed | ForEach-Object { Write-Host "Detected change: $_" }
-            $changed -join "," | Out-File changed.txt
+            Write-Host "Changed SQL files:"
+            $changed | ForEach-Object { Write-Host $_ }
+            echo "files=$($changed -join ',')" >> $env:GITHUB_OUTPUT
           } else {
-            Write-Host "No relevant SQL changes."
-            exit 0
+            Write-Host "No SQL file changes found."
+            echo "files=" >> $env:GITHUB_OUTPUT
           }
 
-      - name: Deploy changed SQL files
-        if: success()
-        shell: pwsh
+      - name: Run SQL files on server
+        if: steps.changes.outputs.files != ''
         run: |
-          $files = Get-Content changed.txt -Raw -ErrorAction SilentlyContinue -split ","
+          $files = "${{ steps.changes.outputs.files }}".Split(',')
           foreach ($file in $files) {
-            if (-not (Test-Path $file)) { continue }
-            Write-Host "Executing: $file"
-            sqlcmd -S $env:testServer -U $env:sqlUser -P $env:sqlPassword -b -C -i $file
+            Write-Host "----------------------------------------"
+            Write-Host "Executing SQL script: $file"
+            sqlcmd -S $env:sqlServer -U $env:sqlUser -P $env:sqlPassword -d $env:databaseName -b -C -i $file
             if ($LASTEXITCODE -ne 0) {
               Write-Error "Execution failed for $file"
               exit 1
             }
           }
-          Write-Host "✅ SQL deployment completed successfully."
+          Write-Host "✅ All SQL scripts executed successfully."
