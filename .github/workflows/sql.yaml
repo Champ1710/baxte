@@ -6,7 +6,6 @@ on:
       - UAT
     paths:
       - 'Databases/**'
-      - '!Databases/**/dbo/Datascripts/**'
 
 jobs:
   deploy-to-test:
